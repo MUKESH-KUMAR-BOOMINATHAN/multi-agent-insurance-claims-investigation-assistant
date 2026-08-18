@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# uv
+.python-version.bak
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ChromaDB / vector store data (regenerated, don't commit)
+chroma_db/
+*.sqlite3
+
+# Logs
+*.log
