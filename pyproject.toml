@@ -1,0 +1,22 @@
+[project]
+name = "multi-agent-insurance-claims-investigation-assistant"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Mukesh Kumar", email = "mukeshkumarb107@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "chromadb>=1.5.9",
+    "langgraph>=1.2.11",
+    "llama-index>=0.14.23",
+    "ollama>=0.6.2",
+]
+
+[project.scripts]
+multi-agent-insurance-claims-investigation-assistant = "multi_agent_insurance_claims_investigation_assistant:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
