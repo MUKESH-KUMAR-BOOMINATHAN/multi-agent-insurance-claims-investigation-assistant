@@ -108,8 +108,21 @@ body {
 }
 
 .nav-item.disabled {
-  opacity: 0.45;
+  opacity: 0.55;
   cursor: not-allowed;
+  justify-content: space-between;
+}
+
+.nav-soon {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 2px 6px;
 }
 
 .main {
@@ -120,6 +133,10 @@ body {
 
 .topbar {
   margin-bottom: 22px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .topbar h1 {
@@ -276,6 +293,52 @@ button:disabled {
 
 .feedback-form button:hover {
   background: var(--primary-dark);
+}
+
+.primary-btn {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.primary-btn:hover {
+  background: var(--primary-dark);
+}
+
+/* ---------- Claim submission form ---------- */
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px 18px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.form-field select,
+.form-field input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+@media (max-width: 700px) {
+  .form-grid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 /* ---------- Detail sections ---------- */
