@@ -41,6 +41,7 @@ def _init_db() -> None:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS feedback (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            claim_id INTEGER,
             claim_json TEXT NOT NULL,
             fraud_probability REAL,
             ai_recommendation TEXT,
@@ -59,15 +60,17 @@ def _save_feedback(
     recommendation: dict,
     investigator_decision: str,
     confirmed_fraud_reported: str,
+    claim_id: int | None = None,
 ) -> int:
     _init_db()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.execute(
         """INSERT INTO feedback
-           (claim_json, fraud_probability, ai_recommendation, investigator_decision,
+           (claim_id, claim_json, fraud_probability, ai_recommendation, investigator_decision,
             confirmed_fraud_reported, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
         (
+            claim_id,
             json.dumps(claim),
             fraud_result.get("fraud_probability"),
             json.dumps(recommendation),
@@ -130,6 +133,7 @@ def feedback_node(
     recommendation: dict,
     investigator_decision: str,
     confirmed_fraud_reported: str,
+    claim_id: int | None = None,
 ) -> dict:
     """
     Args:
@@ -140,6 +144,9 @@ def feedback_node(
             "overridden_to_investigate" — free text for now, your call on an enum later
         confirmed_fraud_reported: "Y" or "N" — the ACTUAL confirmed outcome,
             in the same format as the training data's fraud_reported column
+        claim_id: the claims_store.py row ID this feedback belongs to, if
+            submitted via the API — lets the dashboard link a claim to its
+            eventual outcome
 
     Returns:
         {"status": "ok", "feedback_id": <int>}
@@ -148,7 +155,7 @@ def feedback_node(
         raise ValueError("confirmed_fraud_reported must be 'Y' or 'N' to match training data format")
 
     feedback_id = _save_feedback(
-        claim, fraud_result, recommendation, investigator_decision, confirmed_fraud_reported
+        claim, fraud_result, recommendation, investigator_decision, confirmed_fraud_reported, claim_id
     )
     _add_to_index(claim, confirmed_fraud_reported)
 
