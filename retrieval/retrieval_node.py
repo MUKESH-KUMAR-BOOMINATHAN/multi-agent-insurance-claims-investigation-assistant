@@ -10,31 +10,9 @@ Expects graph state to contain a "claim" dict (same shape used by fraud_node)
 and writes "similar_claims" back into state.
 """
 
-import chromadb
-from llama_index.core import Settings, VectorStoreIndex
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.vector_stores.chroma import ChromaVectorStore
+from retrieval.chroma_client import get_index
 
-CHROMA_PERSIST_DIR = "retrieval/chroma_db"
-COLLECTION_NAME = "historical_claims"
 TOP_K = 5
-
-_index = None  # lazy singleton so we don't reload the index on every call
-
-
-def _get_index() -> VectorStoreIndex:
-    global _index
-    if _index is not None:
-        return _index
-
-    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-
-    chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
-    chroma_collection = chroma_client.get_or_create_collection(COLLECTION_NAME)
-    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
-
-    _index = VectorStoreIndex.from_vector_store(vector_store)
-    return _index
 
 
 def claim_to_query_text(claim: dict) -> str:
@@ -53,7 +31,7 @@ def retrieval_node(state: dict) -> dict:
     claim = state["claim"]
     query_text = claim_to_query_text(claim)
 
-    index = _get_index()
+    index = get_index()
     retriever = index.as_retriever(similarity_top_k=TOP_K)
     nodes = retriever.retrieve(query_text)
 
