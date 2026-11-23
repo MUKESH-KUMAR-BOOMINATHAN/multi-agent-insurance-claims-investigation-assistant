@@ -1,0 +1,60 @@
+# Render Blueprint for the API (the frontend is deployed separately on Vercel).
+#
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo. Render then asks
+# for the values marked `sync: false`. See README -> "Deployment" for the full
+# walkthrough, including how to generate ADMIN_PASSWORD_HASH.
+#
+# This file describes the PAID-MINIMUM production setup: a `starter` instance with
+# a persistent disk, so claims and investigator feedback survive restarts and
+# deploys. To try it on the free plan instead, set `plan: free` and delete the
+# `disk:` block and the DATA_DIR variable. The free plan has NO persistent disk
+# (the SQLite files are wiped on every deploy / restart) and sleeps after about
+# 15 minutes idle, so it is a demo setup, not a production one.
+
+services:
+  - type: web
+    name: claimguard-api
+    runtime: python
+    plan: starter
+    region: oregon
+    # One worker only: the Groq budget, circuit breaker, cache and rate limiters
+    # live in process memory (and a persistent disk is attached to one instance).
+    buildCommand: >-
+      pip install uv &&
+      uv sync --frozen --no-dev &&
+      .venv/bin/python -m retrieval.warmup
+    startCommand: >-
+      .venv/bin/uvicorn main:app
+      --host 0.0.0.0 --port $PORT --workers 1
+      --proxy-headers --forwarded-allow-ips='*'
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: ENVIRONMENT
+        value: production
+      # Random per environment; Render generates it and keeps it stable across deploys.
+      - key: JWT_SECRET
+        generateValue: true
+      # The single operator account. Hash from `uv run python scripts/hash_password.py`.
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      # Your Vercel URL(s), comma separated, no trailing slash, e.g. https://claimguard.vercel.app
+      - key: CORS_ORIGINS
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: GROQ_REASONING_EFFORT
+        value: low
+      # Where the SQLite databases live: the mounted disk below.
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: claimguard-data
+      mountPath: /var/data
+      sizeGB: 1

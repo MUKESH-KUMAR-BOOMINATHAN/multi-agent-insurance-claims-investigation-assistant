@@ -6,18 +6,47 @@ Wraps the trained Random Forest fraud-detection model (from the
 Random-forest-fraud-detection-model repo) as a callable node.
 
 Place this file in: agents/fraud_node.py
-Model file expected at: models/model.pkl (relative to project root)
+Model file expected at: models/model.pkl (override with MODEL_PATH, see config.py)
+
+Failure behaviour: this node never raises. A missing/corrupt model file, an
+unseen category, a missing field or a scoring error each come back as a
+non-"ok" status with requires_investigation=True, i.e. manual review.
 """
+
+import logging
+from typing import Any, TypedDict
 
 import joblib
 import pandas as pd
-from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Load model once at import time (not per-call) so it's cached in memory
-# ---------------------------------------------------------------------------
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "model.pkl"
-model = joblib.load(MODEL_PATH)
+import config
+
+log = logging.getLogger(__name__)
+
+MODEL_PATH = config.MODEL_PATH
+
+
+class FraudResult(TypedDict, total=False):
+    """Result returned by :func:`fraud_node`."""
+
+    status: str  # ok | unrecognized_category | missing_field | model_unavailable | scoring_error
+    fraud_probability: float  # only when status == "ok"
+    fraud_signals: list[str]
+    requires_investigation: bool
+    out_of_range_warnings: list[str]  # only when status == "ok"
+
+
+def _load_model() -> Any | None:
+    """Load the model once at import time. Returns None (and logs) on failure
+    so the API still boots and routes every claim to manual review."""
+    try:
+        return joblib.load(MODEL_PATH)
+    except Exception:  # noqa: BLE001 - any load failure must degrade, not crash
+        log.exception("Could not load fraud model from %s; claims will go to manual review", MODEL_PATH)
+        return None
+
+
+model = _load_model()
 
 # Encoding maps — copied exactly from the original repo's main.py.
 # Must match what LabelEncoder produced during training.
@@ -40,10 +69,24 @@ ENCODINGS = {
     "auto_model": {'3 Series': 0, '92x': 1, '93': 2, '95': 3, 'A3': 4, 'A5': 5, 'Accord': 6, 'C300': 7, 'CRV': 8, 'Camry': 9, 'Civic': 10, 'Corolla': 11, 'E400': 12, 'Escape': 13, 'F150': 14, 'Forrestor': 15, 'Fusion': 16, 'Grand Cherokee': 17, 'Highlander': 18, 'Impreza': 19, 'Jetta': 20, 'Legacy': 21, 'M5': 22, 'MDX': 23, 'ML350': 24, 'Malibu': 25, 'Maxima': 26, 'Neon': 27, 'Passat': 28, 'Pathfinder': 29, 'RAM': 30, 'RSX': 31, 'Silverado': 32, 'TL': 33, 'Tahoe': 34, 'Ultima': 35, 'Wrangler': 36, 'X5': 37, 'X6': 38},
 }
 
-# Approximate min/max for key numeric fields, based on the Kaggle Auto Insurance
-# Claims dataset used to train this model. These are ballpark figures — for a more
-# precise picture, compute actual min()/max() from your training data/insurance_claims.csv
-# and replace these values.
+# Exact feature order the model was trained with (== model.feature_names_in_).
+# scikit-learn rejects a DataFrame whose columns are in a different order, so
+# the inference row is always re-indexed to this list (the API's field order
+# or a feedback row's key order must never matter).
+FEATURE_COLUMNS = [
+    "months_as_customer", "age", "policy_state", "policy_csl", "policy_deductable",
+    "policy_annual_premium", "umbrella_limit", "insured_sex", "insured_education_level",
+    "insured_occupation", "insured_relationship", "capital-gains", "capital-loss",
+    "incident_type", "collision_type", "incident_severity", "authorities_contacted",
+    "incident_state", "incident_city", "incident_hour_of_the_day",
+    "number_of_vehicles_involved", "property_damage", "bodily_injuries", "witnesses",
+    "police_report_available", "total_claim_amount", "injury_claim", "property_claim",
+    "vehicle_claim", "auto_make", "auto_model", "auto_year",
+]
+
+# Min/max for key numeric fields, taken from the training CSV
+# (data/insurance_claims.csv) with a small margin. Values outside the range
+# mean the model is extrapolating, so the claim is forced to human review.
 NUMERIC_RANGES = {
     "months_as_customer": (0, 480),
     "age": (18, 65),
@@ -82,11 +125,12 @@ def _encode_claim(claim: dict) -> pd.DataFrame:
         if field not in data:
             raise KeyError(f"Missing required field: '{field}'")
         value = data[field]
-        if value not in mapping:
-            raise UnrecognizedCategoryError(field, value, list(mapping.keys()))
+        if not isinstance(value, str) or value not in mapping:  # unhashable/odd types too
+            raise UnrecognizedCategoryError(field, str(value), list(mapping.keys()))
         data[field] = mapping[value]
 
-    return pd.DataFrame([data])
+    # Re-index to the training order (see FEATURE_COLUMNS); extra keys are dropped.
+    return pd.DataFrame([data])[FEATURE_COLUMNS]
 
 
 def _check_out_of_range(claim: dict) -> list[str]:
@@ -126,7 +170,7 @@ def _build_signals(claim: dict, fraud_probability: float) -> list[str]:
     return signals
 
 
-def fraud_node(claim: dict) -> dict:
+def fraud_node(claim: dict) -> FraudResult:
     """
     LangGraph-compatible node function.
 
@@ -138,6 +182,7 @@ def fraud_node(claim: dict) -> dict:
     Returns:
         dict with:
           - status: "ok" | "unrecognized_category" | "missing_field"
+                    | "model_unavailable" | "scoring_error"
           - fraud_probability (float, only present if status == "ok")
           - fraud_signals (list[str])
           - requires_investigation (bool) — True whenever the claim can't
@@ -145,13 +190,22 @@ def fraud_node(claim: dict) -> dict:
           - out_of_range_warnings (list[str]) — numeric fields outside the
             training distribution, only present if status == "ok"
     """
+    if model is None:
+        return {
+            "status": "model_unavailable",
+            "fraud_signals": ["Cannot auto-score: fraud model is unavailable. Routed to manual review."],
+            "requires_investigation": True,
+        }
+
     try:
         input_df = _encode_claim(claim)
     except UnrecognizedCategoryError as e:
+        # Deliberately do NOT echo the client-supplied value: this string is
+        # later placed in an LLM prompt, so it must contain only our own text.
         return {
             "status": "unrecognized_category",
             "fraud_signals": [
-                f"Cannot auto-score: {e.field} value '{e.value}' was never seen during "
+                f"Cannot auto-score: '{e.field}' has a value that was never seen during "
                 f"training. Routed to manual review."
             ],
             "requires_investigation": True,
@@ -163,10 +217,19 @@ def fraud_node(claim: dict) -> dict:
             "requires_investigation": True,
         }
 
-    fraud_probability = float(model.predict_proba(input_df)[0][1])
+    try:
+        fraud_probability = float(model.predict_proba(input_df)[0][1])
+        fraud_signals = _build_signals(claim, fraud_probability)
+        out_of_range_warnings = _check_out_of_range(claim)
+    except Exception:  # noqa: BLE001 - e.g. sklearn/pandas version mismatch; never crash the graph
+        log.exception("Fraud model scoring failed; routing claim to manual review")
+        return {
+            "status": "scoring_error",
+            "fraud_signals": ["Cannot auto-score: the fraud model failed to run. Routed to manual review."],
+            "requires_investigation": True,
+        }
+
     requires_investigation = fraud_probability >= INVESTIGATION_THRESHOLD
-    fraud_signals = _build_signals(claim, fraud_probability)
-    out_of_range_warnings = _check_out_of_range(claim)
 
     if out_of_range_warnings:
         # Out-of-range numeric inputs mean we should route to a human even if

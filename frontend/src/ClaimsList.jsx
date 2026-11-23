@@ -1,3 +1,5 @@
+import { loadPrefs } from "./prefs";
+
 export default function ClaimsList({ claims, loading, error, onSelect, onRefresh }) {
   return (
     <div className="panel">
@@ -26,7 +28,7 @@ export default function ClaimsList({ claims, loading, error, onSelect, onRefresh
             </tr>
           </thead>
           <tbody>
-            {claims.map((c) => (
+            {claims.slice(0, loadPrefs().rowsPerPage).map((c) => (
               <tr key={c.id} onClick={() => onSelect(c.id)} className="clickable-row">
                 <td>#{c.id}</td>
                 <td>
@@ -43,11 +45,16 @@ export default function ClaimsList({ claims, loading, error, onSelect, onRefresh
                     {c.recommendation || "—"}
                   </span>
                 </td>
-                <td>{c.created_at ? new Date(c.created_at).toLocaleString() : "—"}</td>
+                <td>{c.created_at ? new Date(c.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—"}</td>
               </tr>
             ))}
           </tbody>
         </table>
+      )}
+      {!loading && !error && claims.length > loadPrefs().rowsPerPage && (
+        <p className="topbar-sub bar-note">
+          Showing the latest {loadPrefs().rowsPerPage} of {claims.length} claims (change this in Settings).
+        </p>
       )}
     </div>
   );

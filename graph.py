@@ -7,20 +7,28 @@ assistant. Wires together:
     fraud_node           -> scores the claim, flags out-of-range / unrecognized inputs
     retrieval_node       -> (skipped if fraud_node couldn't score the claim)
                             pulls similar historical claims as evidence
-    recommendation_node  -> local llama3.1 turns fraud score + similar-claims
-                            evidence into a structured investigator recommendation
+    recommendation_node  -> Groq turns fraud score + similar-claims
+                            evidence into a structured investigator recommendation,
+                            or a deterministic rules fallback if Groq is unavailable
 
-Place this file in the project root (matches: agents/fraud_node.py,
-agents/recommendation_node.py, retrieval/retrieval_node.py).
+Failure policy: every step is wrapped so an unexpected exception degrades that
+step (and appends a human-readable entry to ``warnings``) instead of aborting
+the graph. A claim submitted to this graph always comes back with a
+recommendation.
 """
 
-from typing import TypedDict, Optional
+import logging
+import operator
+from typing import Annotated, TypedDict
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 
 from agents.fraud_node import fraud_node
 from agents.recommendation_node import recommendation_node as _recommendation_node_fn
+from agents.recommendation_node import rules_recommendation
 from retrieval.retrieval_node import retrieval_node as _retrieval_node_fn
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -32,33 +40,63 @@ class GraphState(TypedDict, total=False):
     similar_claims: list
     similar_claims_summary: str
     recommendation: dict
+    # Reducer: every node's warnings are appended, never overwritten.
+    warnings: Annotated[list[str], operator.add]
 
 
 # ---------------------------------------------------------------------------
-# Node wrappers — adapt each node's own function signature to (state) -> dict
+# Node wrappers — adapt each node's own signature to (state) -> partial update
 # ---------------------------------------------------------------------------
 def fraud_node_step(state: GraphState) -> dict:
-    """fraud_node takes a bare claim dict and returns its own result dict —
-    wrap it so it reads/writes through shared graph state."""
-    result = fraud_node(state["claim"])
-    return {"fraud_result": result}
+    """Score the claim; on any unexpected error route it to manual review."""
+    try:
+        return {"fraud_result": fraud_node(state["claim"])}
+    except Exception:  # noqa: BLE001 - the pipeline must always finish
+        log.exception("fraud_node crashed; routing claim to manual review")
+        return {
+            "fraud_result": {
+                "status": "scoring_error",
+                "fraud_signals": ["Cannot auto-score: unexpected scoring error. Routed to manual review."],
+                "requires_investigation": True,
+            },
+            "warnings": ["Fraud scoring failed unexpectedly; claim routed to manual review."],
+        }
 
 
 def retrieval_node_step(state: GraphState) -> dict:
-    """retrieval_node already speaks `state` natively (reads state["claim"],
-    writes similar_claims / similar_claims_summary), so just delegate."""
-    updated = _retrieval_node_fn(state)
+    """Retrieve similar claims. retrieval_node already degrades internally;
+    the outer guard is a belt-and-braces net for anything it didn't foresee."""
+    try:
+        updated = _retrieval_node_fn(state)
+    except Exception:  # noqa: BLE001
+        log.exception("retrieval_node crashed; continuing without evidence")
+        return {
+            "similar_claims": [],
+            "similar_claims_summary": "Similar-claims evidence unavailable (retrieval error).",
+            "warnings": ["Similar-claims retrieval failed; recommendation uses model score only."],
+        }
     return {
         "similar_claims": updated.get("similar_claims", []),
         "similar_claims_summary": updated.get("similar_claims_summary", ""),
+        "warnings": updated.get("warnings", []),
     }
 
 
 def recommendation_node_step(state: GraphState) -> dict:
-    """recommendation_node also speaks `state` natively (reads fraud_result /
-    similar_claims, writes recommendation), so just delegate."""
-    updated = _recommendation_node_fn(state)
-    return {"recommendation": updated.get("recommendation", {})}
+    """Produce the recommendation and surface when it was NOT written by Groq."""
+    try:
+        recommendation = _recommendation_node_fn(dict(state)).get("recommendation", {})
+    except Exception:  # noqa: BLE001 - recommendation_node never raises; this is a last resort
+        log.exception("recommendation_node crashed; using rules fallback")
+        recommendation = rules_recommendation(dict(state), "unexpected_error")
+
+    warnings: list[str] = []
+    if recommendation.get("source") == "rules_fallback":
+        warnings.append(
+            "AI recommendation unavailable "
+            f"({recommendation.get('fallback_reason', 'unknown')}); a rules-based recommendation was used."
+        )
+    return {"recommendation": recommendation, "warnings": warnings}
 
 
 # ---------------------------------------------------------------------------
@@ -68,15 +106,9 @@ def recommendation_node_step(state: GraphState) -> dict:
 # nothing there.
 # ---------------------------------------------------------------------------
 def route_after_fraud(state: GraphState) -> str:
-    if state["fraud_result"].get("status") == "ok":
+    if state.get("fraud_result", {}).get("status") == "ok":
         return "retrieve"
     return "skip_retrieval"
-
-
-# retrieval_node writes similar_claims_summary; if that key is missing (the
-# skip_retrieval path), recommendation_node still runs but with no similar-
-# claims evidence — its own prompt rules handle status != "ok" by forcing
-# "investigate" regardless.
 
 
 # ---------------------------------------------------------------------------
@@ -106,10 +138,12 @@ def build_graph():
 
 
 if __name__ == "__main__":
+    import json as _json
+
     app = build_graph()
 
     test_claim = {
-         "months_as_customer": 328,
+        "months_as_customer": 328,
         "age": 48,
         "policy_state": "OH",
         "policy_csl": "250/500",
@@ -149,6 +183,6 @@ if __name__ == "__main__":
     print("similar_claims_summary:", final_state.get("similar_claims_summary"))
     for c in final_state.get("similar_claims", []):
         print(f"  score={c['score']}  fraud={c['fraud_reported']}  {c['summary'][:100]}...")
+    print("warnings:", final_state.get("warnings"))
     print("\nrecommendation:")
-    import json as _json
     print(_json.dumps(final_state.get("recommendation", {}), indent=2))
