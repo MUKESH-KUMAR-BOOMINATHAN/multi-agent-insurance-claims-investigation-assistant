@@ -3,9 +3,17 @@
 import sqlite3
 
 import pytest
+from sqlalchemy import func, insert, select, text
 
 from agents import feedback_node as fb
 from db import claims_store
+from db.schema import claims, feedback
+from tests.conftest import sqlite_only
+
+
+def _feedback_count() -> int:
+    with fb._connect() as conn:
+        return conn.execute(select(func.count()).select_from(feedback)).scalar_one()
 
 
 def test_insert_and_get_round_trip_including_warnings():
@@ -37,14 +45,13 @@ def test_list_claims_is_newest_first_and_bounded():
 def test_corrupt_json_cell_does_not_break_the_whole_listing():
     good = claims_store.insert_claim({"ok": True}, {}, [], {})
     bad = claims_store.insert_claim({}, {}, [], {})
-    conn = sqlite3.connect(claims_store.DB_PATH)
-    conn.execute("UPDATE claims SET fraud_result_json = '{not json' WHERE id = ?", (bad,))
-    conn.commit()
-    conn.close()
+    with claims_store._connect() as conn:
+        conn.execute(text("UPDATE claims SET fraud_result_json = '{not json' WHERE id = :id"), {"id": bad})
     assert {c["id"] for c in claims_store.list_claims()} == {good, bad}
     assert claims_store.get_claim(bad)["fraud_result"] is None
 
 
+@sqlite_only
 def test_legacy_database_without_warnings_column_is_migrated(tmp_path, monkeypatch):
     legacy = tmp_path / "legacy.db"
     conn = sqlite3.connect(legacy)
@@ -63,21 +70,17 @@ def test_legacy_database_without_warnings_column_is_migrated(tmp_path, monkeypat
     assert rows[0]["similar_claims_summary"] is None  # the later column is migrated in too
 
 
-def test_connection_is_closed_even_when_a_statement_fails(monkeypatch):
-    opened = []
-    real_connect = sqlite3.connect
-
-    def tracking_connect(*args, **kwargs):
-        conn = real_connect(*args, **kwargs)
-        opened.append(conn)
-        return conn
-
-    monkeypatch.setattr(claims_store.sqlite3, "connect", tracking_connect)
-    with pytest.raises(sqlite3.OperationalError):
+def test_a_failed_statement_rolls_back_the_whole_transaction():
+    with pytest.raises(Exception):  # noqa: B017 - the driver's error type differs per database
         with claims_store._connect() as conn:
-            conn.execute("SELECT * FROM table_that_does_not_exist")
-    with pytest.raises(sqlite3.ProgrammingError):  # closed connection cannot be used
-        opened[-1].execute("SELECT 1")
+            conn.execute(insert(claims).values(claim_json="{}", status="pending", created_at="2025-01-01"))
+            conn.execute(text("SELECT * FROM table_that_does_not_exist"))
+    assert claims_store.list_claims() == []  # the insert above was rolled back
+
+
+def test_writes_survive_across_separate_transactions():
+    claim_id = claims_store.insert_claim({"kept": True}, {}, [], {})
+    assert claims_store.get_claim(claim_id)["claim"] == {"kept": True}
 
 
 def _save(claim_id):
@@ -88,9 +91,7 @@ def test_feedback_for_the_same_claim_is_rejected_not_duplicated():
     assert _save(1)["status"] == "ok"
     with pytest.raises(fb.DuplicateFeedbackError):
         _save(1)
-    conn = sqlite3.connect(fb.DB_PATH)
-    assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 1
-    conn.close()
+    assert _feedback_count() == 1
 
 
 def test_feedback_without_claim_id_is_not_subject_to_uniqueness():
@@ -101,7 +102,7 @@ def test_feedback_without_claim_id_is_not_subject_to_uniqueness():
 def test_invalid_label_is_rejected_before_anything_is_written():
     with pytest.raises(ValueError):
         fb.feedback_node({}, {}, {}, "agreed", "maybe", 5)
-    assert not fb.DB_PATH.exists() or sqlite3.connect(fb.DB_PATH).execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 0
+    assert _feedback_count() == 0
 
 
 def test_index_failure_is_reported_but_never_loses_the_feedback(monkeypatch):

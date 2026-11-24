@@ -1,8 +1,21 @@
 """
 auth.py
 
-Authentication for the API: a single operator account, scrypt-hashed password,
-short-lived signed bearer tokens (JWT, HS256).
+Authentication and roles for the API: scrypt-hashed passwords and short-lived
+signed bearer tokens (JWT, HS256).
+
+Roles
+  * admin         the organization's owner, configured by ADMIN_USERNAME /
+                  ADMIN_PASSWORD_HASH (never stored in the database). Sees all
+                  claims and can create investigator and customer accounts.
+  * investigator  organization staff created by the admin. Sees all claims and
+                  can create customer accounts.
+  * customer      a policyholder created by the organization. Can file claims and
+                  see only their own claims, with a plain status (never the fraud
+                  score or the AI's reasoning).
+
+The role is NOT trusted from the token: every request re-reads the account, so a
+deactivated user is locked out immediately, not when their token expires.
 
 Design choices
   * Fail closed. Auth is ON unless AUTH_DISABLED is set, and AUTH_DISABLED is
@@ -27,12 +40,15 @@ import hashlib
 import hmac
 import logging
 import secrets
+from dataclasses import dataclass
+from typing import Annotated
 from datetime import UTC, datetime, timedelta
 
 import jwt
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 import config
+from db import users_store
 
 log = logging.getLogger(__name__)
 
@@ -80,22 +96,88 @@ def verify_password(password: str, stored: str) -> bool:
 _DUMMY_HASH = hash_password(secrets.token_hex(8))
 
 
-def authenticate(username: str, password: str) -> bool:
-    """True only for the configured operator with the right password."""
-    stored = config.ADMIN_PASSWORD_HASH or _DUMMY_HASH
-    password_ok = verify_password(password, stored)
-    user_ok = hmac.compare_digest(username.encode("utf-8"), config.ADMIN_USERNAME.encode("utf-8"))
-    return bool(config.ADMIN_PASSWORD_HASH) and bool(config.ADMIN_USERNAME) and user_ok and password_ok
+@dataclass(frozen=True)
+class User:
+    username: str
+    role: str  # admin | investigator | customer
+    full_name: str
+    # True while the account still has a password someone else chose (new
+    # account, reset). Such a token may only change the password.
+    must_change_password: bool = False
+
+    @property
+    def is_org(self) -> bool:
+        return self.role in ("admin", "investigator")
+
+
+def _is_admin_username(username: str) -> bool:
+    return bool(config.ADMIN_USERNAME) and hmac.compare_digest(
+        username.casefold().encode("utf-8"), config.ADMIN_USERNAME.casefold().encode("utf-8")
+    )
+
+
+def _from_account(account: dict) -> User:
+    return User(
+        username=account["username"],
+        role=account["role"],
+        full_name=account["full_name"],
+        must_change_password=bool(account.get("must_change_password")),
+    )
+
+
+def _admin_user() -> User:
+    return User(username=config.ADMIN_USERNAME, role="admin", full_name="Administrator")
+
+
+def authenticate(username: str, password: str) -> User | None:
+    """The account for these credentials, or None.
+
+    Every path verifies exactly one scrypt hash, so an unknown username, a
+    deactivated account and a wrong password all take the same time.
+    """
+    if _is_admin_username(username):
+        stored = config.ADMIN_PASSWORD_HASH or _DUMMY_HASH
+        ok = verify_password(password, stored)
+        return _admin_user() if ok and config.ADMIN_PASSWORD_HASH else None
+
+    record = users_store.get_login_record(username) if username else None
+    if record is None:
+        verify_password(password, _DUMMY_HASH)
+        return None
+    account, stored = record
+    if not verify_password(password, stored):
+        return None
+    return _from_account(account)
+
+
+def resolve_user(username: str) -> User | None:
+    """Current account for a token subject (None if deleted or deactivated)."""
+    if _is_admin_username(username):
+        return _admin_user() if config.ADMIN_PASSWORD_HASH else None
+    account = users_store.get_active_user(username)
+    if account is None:
+        return None
+    return _from_account(account)
+
+
+def is_reserved_username(username: str) -> bool:
+    """The admin's username can never be taken by a database account."""
+    return _is_admin_username(username)
 
 
 # ---------------------------------------------------------------------------
 # Tokens
 # ---------------------------------------------------------------------------
-def create_token(subject: str) -> str:
-    """Issue a signed token for ``subject`` valid for TOKEN_TTL_MINUTES."""
+def create_token(subject: str, role: str | None = None) -> str:
+    """Issue a signed token for ``subject`` valid for TOKEN_TTL_MINUTES.
+
+    ``role`` is included for the client's convenience only; the server always
+    re-reads the account (see :func:`require_user`).
+    """
     now = datetime.now(UTC)
     payload = {
         "sub": subject,
+        **({"role": role} if role else {}),
         "iss": ISSUER,
         "iat": now,
         "exp": now + timedelta(minutes=config.TOKEN_TTL_MINUTES),
@@ -123,19 +205,56 @@ def auth_required() -> bool:
     return not (config.AUTH_DISABLED and not config.IS_PRODUCTION)
 
 
-def require_user(request: Request) -> str:
-    """Dependency: return the authenticated subject or raise 401."""
+DEV_USER = User(username="dev", role="admin", full_name="Developer (auth disabled)")
+
+
+def require_account(request: Request) -> User:
+    """Dependency: the authenticated, still-active account, or 401.
+
+    Allows an account that must still change its password; use only on the
+    routes such an account needs (who am I, change password).
+    """
     if not auth_required():
-        return "anonymous-dev"
+        return DEV_USER
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     challenge = {"WWW-Authenticate": "Bearer"}
     if scheme.lower() != "bearer" or not token.strip():
         raise HTTPException(status_code=401, detail="Not authenticated", headers=challenge)
     try:
-        return decode_token(token.strip())
+        subject = decode_token(token.strip())
     except jwt.PyJWTError:
         # Same message for expired / tampered / wrong issuer: don't help an attacker.
         raise HTTPException(status_code=401, detail="Invalid or expired token", headers=challenge) from None
+    user = resolve_user(subject)
+    if user is None:  # account deactivated (or removed) since the token was issued
+        raise HTTPException(status_code=401, detail="Invalid or expired token", headers=challenge)
+    return user
+
+
+def require_user(user: Annotated[User, Depends(require_account)]) -> User:
+    """Dependency: an authenticated account that has set its own password."""
+    if user.must_change_password:
+        raise HTTPException(status_code=403, detail="You must change your temporary password first")
+    return user
+
+
+def require_org(user: Annotated[User, Depends(require_user)]) -> User:
+    """Dependency: admin or investigator."""
+    if not user.is_org:
+        raise HTTPException(status_code=403, detail="Organization access only")
+    return user
+
+
+def require_admin(user: Annotated[User, Depends(require_user)]) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator access only")
+    return user
+
+
+def require_customer(user: Annotated[User, Depends(require_user)]) -> User:
+    if user.role != "customer":
+        raise HTTPException(status_code=403, detail="Customer access only")
+    return user
 
 
 def validate_auth_config() -> None:

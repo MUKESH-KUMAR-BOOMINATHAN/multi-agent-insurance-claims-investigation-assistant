@@ -68,9 +68,13 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 # --- Storage ---------------------------------------------------------------
-# DATA_DIR is where the SQLite databases live. On a host with an ephemeral
-# filesystem (e.g. Render without a disk) anything written here is lost on
-# every deploy/restart; mount a persistent disk and point DATA_DIR at it.
+# DATABASE_URL: a Postgres connection string (e.g. from Neon's free tier). When
+# set, ALL data (claims, accounts, feedback, audit log) lives there, which is
+# what a host with an ephemeral filesystem such as Render's free plan needs.
+# When unset, SQLite files under DATA_DIR are used (local development, tests);
+# on a host, files there are lost on every deploy/restart unless DATA_DIR is a
+# persistent disk.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip() or None
 DATA_DIR = _env_path("DATA_DIR", "data")
 CLAIMS_DB_PATH = _env_path("CLAIMS_DB_PATH", str(DATA_DIR / "claims.db"))
 FEEDBACK_DB_PATH = _env_path("FEEDBACK_DB_PATH", str(DATA_DIR / "feedback.db"))
@@ -129,6 +133,10 @@ ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "").strip()
 JWT_SECRET = os.getenv("JWT_SECRET", "").strip()  # >= 32 chars; random per environment
 TOKEN_TTL_MINUTES = _env_int("TOKEN_TTL_MINUTES", 480)
 LOGIN_ATTEMPTS_PER_MINUTE = _env_int("LOGIN_ATTEMPTS_PER_MINUTE", 5)
+# Per-account lockout (stored in the database, so it survives restarts/sleep):
+# after this many consecutive wrong passwords the account is locked for a while.
+LOCKOUT_AFTER_FAILURES = _env_int("LOCKOUT_AFTER_FAILURES", 5)
+LOCKOUT_MINUTES = _env_int("LOCKOUT_MINUTES", 15)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # "json" (one event per line, for log aggregators) or "text". JSON in production.

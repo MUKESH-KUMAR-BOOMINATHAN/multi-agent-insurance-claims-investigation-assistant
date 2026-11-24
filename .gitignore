@@ -137,3 +137,7 @@ frontend/.env.*
 ehthumbs.db
 Thumbs.db
 Desktop.ini
+
+# Database backups (personal data and password hashes): never commit
+backups/
+*.backup.json

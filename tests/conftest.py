@@ -2,15 +2,29 @@
 Shared fixtures. Every test runs against throwaway SQLite files, with no Groq
 key, a fresh budget/breaker/cache, and the similar-claims index stubbed as "not built"
 (so pipeline tests exercise the fallback path and never touch the network).
+
+To run the whole suite against Postgres instead, point TEST_DATABASE_URL at an
+EMPTY, disposable database (every table is truncated before each test):
+
+    TEST_DATABASE_URL=postgresql://user:pw@host:5432/test_db  python -m pytest
 """
 
+import os
+
 import pytest
+from sqlalchemy import text
 
 import config
 from agents import feedback_node as feedback_module
 from agents import groq_client, recommendation_node
 from db import claims_store
+from db import engine as db_engine
 from retrieval import retrieval_node, similarity
+
+
+TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", "").strip() or None
+postgres_only = pytest.mark.skipif(not TEST_DATABASE_URL, reason="needs TEST_DATABASE_URL")
+sqlite_only = pytest.mark.skipif(bool(TEST_DATABASE_URL), reason="SQLite-specific")
 
 
 @pytest.fixture
@@ -38,6 +52,15 @@ def isolated_environment(tmp_path, monkeypatch):
     monkeypatch.setattr(feedback_module, "DB_PATH", tmp_path / "feedback.db")
     monkeypatch.setattr(claims_store, "_initialized_for", None)
     monkeypatch.setattr(feedback_module, "_initialized_for", None)
+    monkeypatch.setattr(config, "DATABASE_URL", TEST_DATABASE_URL)
+    db_engine.reset_for_tests()
+    if TEST_DATABASE_URL:
+        with claims_store._connect() as conn:  # creates the schema on first use
+            conn.execute(text(
+                "TRUNCATE claims, users, login_throttle, audit_events RESTART IDENTITY"
+            ))
+        with feedback_module._connect() as conn:
+            conn.execute(text("TRUNCATE feedback RESTART IDENTITY"))
 
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     groq_client.reset_guards()

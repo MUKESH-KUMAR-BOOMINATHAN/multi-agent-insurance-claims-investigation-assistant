@@ -1,25 +1,25 @@
+// Headline numbers above the claims list (same tile style as the Analytics page).
 export default function StatCards({ claims }) {
-  const total = claims.length;
-  const pending = claims.filter((c) => c.status === "pending").length;
-  const flagged = claims.filter((c) => c.fraud_probability != null && c.fraud_probability >= 0.5).length;
   const scored = claims.filter((c) => c.fraud_probability != null);
-  const avgProb = scored.length
-    ? scored.reduce((sum, c) => sum + c.fraud_probability, 0) / scored.length
-    : null;
+  const pending = claims.filter((c) => c.status === "pending").length;
+  const highPending = claims.filter((c) => c.status === "pending" && (c.fraud_probability ?? 0) >= 0.5).length;
+  const avg = scored.length ? scored.reduce((s, c) => s + c.fraud_probability, 0) / scored.length : null;
+  const reviewed = claims.length - pending;
 
-  const stats = [
-    { label: "Total Claims", value: total },
-    { label: "Pending Review", value: pending },
-    { label: "Flagged High-Risk", value: flagged, tone: "danger" },
-    { label: "Avg Fraud Score", value: avgProb != null ? `${(avgProb * 100).toFixed(0)}%` : "—" },
+  const tiles = [
+    { label: "Total claims", value: claims.length, hint: `${scored.length} auto-scored` },
+    { label: "Waiting for review", value: pending, hint: "pending decisions", tone: pending ? "warn" : "" },
+    { label: "High risk, not yet reviewed", value: highPending, hint: "start with these", tone: highPending ? "bad" : "" },
+    { label: "Average fraud score", value: avg != null ? `${(avg * 100).toFixed(0)}%` : "—", hint: `${reviewed} reviewed so far` },
   ];
 
   return (
-    <div className="stat-row">
-      {stats.map((s) => (
-        <div className="stat-card" key={s.label}>
-          <div className={`stat-value ${s.tone === "danger" ? "stat-value-danger" : ""}`}>{s.value}</div>
-          <div className="stat-label">{s.label}</div>
+    <div className="kpi-row kpi-4">
+      {tiles.map((t) => (
+        <div className={`kpi ${t.tone ? `kpi-${t.tone}` : ""}`} key={t.label}>
+          <div className="kpi-label">{t.label}</div>
+          <div className="kpi-value">{t.value}</div>
+          <div className="kpi-hint">{t.hint}</div>
         </div>
       ))}
     </div>

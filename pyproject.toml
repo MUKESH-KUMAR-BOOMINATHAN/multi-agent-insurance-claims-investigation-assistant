@@ -14,18 +14,17 @@ dependencies = [
     "langgraph>=1.2.11",
     "numpy>=2.5.2",
     "pandas>=3.0.5",
+    "psycopg[binary]>=3.2",
     "pyjwt>=2.15.1",
     "python-dotenv>=1.0.0",
     "scikit-learn>=1.9.0",
+    "sqlalchemy>=2.0",
     "uvicorn[standard]>=0.52.3",
 ]
 
-[project.scripts]
-multi-agent-insurance-claims-investigation-assistant = "multi_agent_insurance_claims_investigation_assistant:main"
-
-[build-system]
-requires = ["uv_build>=0.12.5,<0.13.0"]
-build-backend = "uv_build"
+# An application, not an installable library: uv manages the environment only.
+[tool.uv]
+package = false
 
 [dependency-groups]
 dev = [

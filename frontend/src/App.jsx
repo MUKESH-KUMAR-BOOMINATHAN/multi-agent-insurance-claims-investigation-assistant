@@ -8,9 +8,13 @@ import ClaimForm from "./ClaimForm";
 import Login from "./Login";
 import Analytics from "./Analytics";
 import Settings from "./Settings";
+import People from "./People";
+import CustomerPortal from "./CustomerPortal";
+import ChangePassword from "./ChangePassword";
+import AuthLayout from "./AuthLayout";
 import "./App.css";
 
-function Dashboard({ onSignOut, authRequired }) {
+function Dashboard({ onSignOut, authRequired, currentUser }) {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -21,16 +25,23 @@ function Dashboard({ onSignOut, authRequired }) {
   const [view, setView] = useState(hashClaim ? "detail" : hash === "new" ? "new" : "list");
   const [selectedClaimId, setSelectedClaimId] = useState(hashClaim ? Number(hashClaim[1]) : null);
 
-  const refresh = () => {
-    setLoading(true);
-    setError(null);
+  // State is only set in the promise callbacks; `loading` starts true, and a manual
+  // refresh keeps the current list on screen while it reloads.
+  const fetchClaims = () =>
     listClaims()
-      .then(setClaims)
+      .then((rows) => {
+        setClaims(rows);
+        setError(null);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
+  const refresh = () => {
+    fetchClaims();
   };
 
-  useEffect(refresh, []);
+  useEffect(() => {
+    fetchClaims();
+  }, []);
 
   const openDetail = (id) => {
     setSelectedClaimId(id);
@@ -45,7 +56,7 @@ function Dashboard({ onSignOut, authRequired }) {
   // section: which sidebar page is open. "claims" uses `view` for list/new/detail.
   const [section, setSection] = useState(() => {
     const fromHash = window.location.hash.slice(1);
-    return ["analytics", "settings"].includes(fromHash) ? fromHash : "claims";
+    return ["analytics", "settings", "people"].includes(fromHash) ? fromHash : "claims";
   });
   const navigate = (next) => {
     setSection(next);
@@ -57,6 +68,7 @@ function Dashboard({ onSignOut, authRequired }) {
   const titles = {
     analytics: ["Analytics", "Fraud-risk and recommendation trends across all claims"],
     settings: ["Settings", "Your profile, preferences and system status"],
+    people: ["People", "Create and manage customer and investigator accounts"],
     list: ["Claims", "Review submitted claims and AI-generated fraud recommendations"],
     new: ["Submit New Claim", "Fill in the claim details to run the investigation pipeline"],
     detail: [`Claim #${selectedClaimId}`, "Fraud analysis, retrieved evidence, and investigator sign-off"],
@@ -65,7 +77,7 @@ function Dashboard({ onSignOut, authRequired }) {
 
   return (
     <div className="shell">
-      <Sidebar onSignOut={onSignOut} section={section} onNavigate={navigate} />
+      <Sidebar onSignOut={onSignOut} section={section} onNavigate={navigate} currentUser={currentUser} />
 
       <div className="main">
         <header className="topbar">
@@ -82,7 +94,8 @@ function Dashboard({ onSignOut, authRequired }) {
 
         <main className="content">
           {section === "analytics" && <Analytics claims={claims} />}
-          {section === "settings" && <Settings authRequired={authRequired} onSignOut={onSignOut} />}
+          {section === "settings" && <Settings authRequired={authRequired} onSignOut={onSignOut} currentUser={currentUser} />}
+          {section === "people" && <People currentUser={currentUser} />}
 
           {section === "claims" && view === "list" && (
             <>
@@ -114,64 +127,87 @@ function Dashboard({ onSignOut, authRequired }) {
   );
 }
 
-// Auth gate. The server says whether a login is required (it is not in local
-// development with AUTH_DISABLED); the token itself lives only in api.js memory.
+// With AUTH_DISABLED (local development only) the API treats every request as this admin.
+const DEV_USER = { username: "dev", role: "admin", full_name: "Developer" };
+
+// Auth gate + role routing. The server says whether a login is required; the
+// token itself lives only in api.js memory. Customers get the customer portal,
+// admins and investigators get the organization dashboard. (The API enforces
+// the same split; this only chooses which screens to show.)
 export default function App() {
-  const [session, setSession] = useState({ status: "loading", required: false, signedIn: false, error: null });
+  const [session, setSession] = useState({ status: "loading", required: false, user: null, error: null });
 
   // State changes happen only in the promise callbacks (the initial state is already "loading").
   const fetchConfig = () =>
     getAuthConfig()
       .then((cfg) =>
-        setSession({ status: "ready", required: cfg.auth_required, signedIn: !cfg.auth_required, error: null }),
+        setSession({
+          status: "ready",
+          required: cfg.auth_required,
+          user: cfg.auth_required ? null : DEV_USER,
+          error: null,
+        }),
       )
-      .catch((e) => setSession({ status: "error", required: false, signedIn: false, error: e.message }));
+      .catch((e) => setSession({ status: "error", required: false, user: null, error: e.message }));
 
   const retry = () => {
-    setSession({ status: "loading", required: false, signedIn: false, error: null });
+    setSession({ status: "loading", required: false, user: null, error: null });
     fetchConfig();
   };
 
   useEffect(() => {
-    // A 401 anywhere (expired token) sends the user back to the login screen.
-    setUnauthorizedHandler(() => setSession((s) => ({ ...s, signedIn: false })));
+    // A 401 anywhere (expired token, deactivated account) sends the user back to the login screen.
+    setUnauthorizedHandler(() => setSession((s) => ({ ...s, user: null })));
     fetchConfig();
   }, []);
 
+  const signOut = session.required
+    ? () => {
+        logout();
+        window.location.hash = "";
+        setSession((s) => ({ ...s, user: null }));
+      }
+    : null;
+
   if (session.status === "loading") {
     return (
-      <div className="login-shell">
-        <div className="login-card">
-          <p>Connecting to the server…</p>
-          <p className="topbar-sub">A server that has been idle can take up to a minute to wake up.</p>
+      <AuthLayout>
+        <div className="auth-card">
+          <div className="spinner" aria-hidden="true" />
+          <h1 className="login-title">Connecting…</h1>
+          <p className="topbar-sub">A free server that has been idle can take up to a minute to wake up.</p>
         </div>
-      </div>
+      </AuthLayout>
     );
   }
   if (session.status === "error") {
     return (
-      <div className="login-shell">
-        <div className="login-card">
+      <AuthLayout>
+        <div className="auth-card">
+          <h1 className="login-title">Can't reach the server</h1>
           <p className="error" role="alert">{session.error}</p>
-          <button className="primary-btn" onClick={retry}>Retry</button>
+          <button className="primary-btn auth-submit" onClick={retry}>Try again</button>
         </div>
-      </div>
+      </AuthLayout>
     );
   }
-  if (session.required && !session.signedIn) {
-    return <Login onSignedIn={() => setSession((s) => ({ ...s, signedIn: true }))} />;
+  if (!session.user) {
+    return <Login onSignedIn={(user) => setSession((s) => ({ ...s, user }))} />;
   }
-  return (
-    <Dashboard
-      authRequired={session.required}
-      onSignOut={
-        session.required
-          ? () => {
-              logout();
-              setSession((s) => ({ ...s, signedIn: false }));
-            }
-          : null
-      }
-    />
-  );
+  if (session.user.must_change_password) {
+    // The organization chose this password; nothing else is reachable until it is replaced.
+    return (
+      <AuthLayout>
+        <ChangePassword
+          forced
+          onDone={() => setSession((s) => ({ ...s, user: { ...s.user, must_change_password: false } }))}
+          onCancel={signOut}
+        />
+      </AuthLayout>
+    );
+  }
+  if (session.user.role === "customer") {
+    return <CustomerPortal user={session.user} onSignOut={signOut} />;
+  }
+  return <Dashboard authRequired={session.required} onSignOut={signOut} currentUser={session.user} />;
 }

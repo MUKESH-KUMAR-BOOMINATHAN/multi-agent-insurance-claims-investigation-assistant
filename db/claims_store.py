@@ -1,91 +1,59 @@
 """
 claims_store.py
 
-SQLite persistence for submitted claims. Separate from feedback.db's
-feedback table — this tracks EVERY claim that comes through the API
-(pending or reviewed), which is what the dashboard list view needs.
+Persistence for submitted claims: EVERY claim that comes through the API
+(pending or reviewed), which is what the dashboards need. Runs on SQLite
+locally and on Postgres when DATABASE_URL is set (see db/engine.py).
 
-Every operation uses a connection that is committed on success, rolled back
-on error and ALWAYS closed (the previous version leaked connections when a
-statement raised). The schema is created once per DB path and migrated
-forward (``warnings_json`` column) without losing existing rows.
-
-Place this file in: db/claims_store.py
+Every operation runs in a transaction that commits on success, rolls back on
+error and always releases its connection. The schema is created and migrated
+forward automatically without losing existing rows.
 """
 
 import json
 import logging
-import sqlite3
-from contextlib import contextmanager
-from datetime import datetime, UTC
-from pathlib import Path
 from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+
+from sqlalchemy import Connection, insert, select, update
 
 import config
+from db import engine as db_engine
+from db.schema import CLAIMS_META, claims
 
 log = logging.getLogger(__name__)
 
 DB_PATH: Path = config.CLAIMS_DB_PATH
-_initialized_for: Path | None = None
+_initialized_for: str | None = None  # kept for tests that point DB_PATH elsewhere
 
-# Complete, literal statements (no string building): every value is a bound parameter.
-_LIST_SQL = """
-    SELECT id, claim_json, fraud_result_json, similar_claims_json, recommendation_json,
-           status, created_at, reviewed_at, warnings_json, similar_summary
-    FROM claims ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
-"""
-_GET_SQL = """
-    SELECT id, claim_json, fraud_result_json, similar_claims_json, recommendation_json,
-           status, created_at, reviewed_at, warnings_json, similar_summary
-    FROM claims WHERE id = ?
-"""
+_COLUMNS = (
+    claims.c.id, claims.c.claim_json, claims.c.fraud_result_json, claims.c.similar_claims_json,
+    claims.c.recommendation_json, claims.c.status, claims.c.created_at, claims.c.reviewed_at,
+    claims.c.warnings_json, claims.c.similar_summary, claims.c.submitted_by, claims.c.outcome,
+)
+_NEWEST_FIRST = (claims.c.created_at.desc(), claims.c.id.desc())
+
+
+def database_url() -> str:
+    return db_engine.url_for(DB_PATH)
 
 
 @contextmanager
-def _connect() -> Iterator[sqlite3.Connection]:
-    """Open a connection; commit on success, roll back on error, always close."""
-    init_db()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    try:
+def _connect() -> Iterator[Connection]:
+    """A transaction on the claims database (also holds accounts and the audit log)."""
+    with db_engine.transaction(database_url(), CLAIMS_META) as conn:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
 
 def init_db() -> None:
-    """Create the table and apply additive migrations (idempotent, once per path)."""
-    global _initialized_for
-    if _initialized_for == DB_PATH:
-        return
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")  # readers never block the writer
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS claims (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                claim_json TEXT NOT NULL,
-                fraud_result_json TEXT,
-                similar_claims_json TEXT,
-                recommendation_json TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL,
-                reviewed_at TEXT
-            )
-        """)
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(claims)")}
-        if "warnings_json" not in existing:
-            conn.execute("ALTER TABLE claims ADD COLUMN warnings_json TEXT")
-        if "similar_summary" not in existing:
-            conn.execute("ALTER TABLE claims ADD COLUMN similar_summary TEXT")
-        conn.commit()
-    finally:
-        conn.close()
-    _initialized_for = DB_PATH
+    """Create/migrate the schema now (called at startup so the first request is fast)."""
+    db_engine.ensure_schema(database_url(), CLAIMS_META)
+
+
+def now_iso() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def insert_claim(
@@ -95,25 +63,26 @@ def insert_claim(
     recommendation: dict,
     warnings: list | None = None,
     similar_summary: str | None = None,
+    submitted_by: str | None = None,
 ) -> int:
     """Persist a processed claim as 'pending' and return its new id."""
     with _connect() as conn:
-        cursor = conn.execute(
-            """INSERT INTO claims
-               (claim_json, fraud_result_json, similar_claims_json, recommendation_json,
-                status, created_at, warnings_json, similar_summary)
-               VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)""",
-            (
-                json.dumps(claim),
-                json.dumps(fraud_result),
-                json.dumps(similar_claims),
-                json.dumps(recommendation),
-                datetime.now(UTC).isoformat(),
-                json.dumps(warnings or []),
-                similar_summary,
-            ),
+        result = conn.execute(
+            insert(claims)
+            .values(
+                claim_json=json.dumps(claim),
+                fraud_result_json=json.dumps(fraud_result),
+                similar_claims_json=json.dumps(similar_claims),
+                recommendation_json=json.dumps(recommendation),
+                status="pending",
+                created_at=now_iso(),
+                warnings_json=json.dumps(warnings or []),
+                similar_summary=similar_summary,
+                submitted_by=submitted_by,
+            )
+            .returning(claims.c.id)
         )
-        return int(cursor.lastrowid)
+        return int(result.scalar_one())
 
 
 def _loads(raw: str | None, default):
@@ -127,9 +96,10 @@ def _loads(raw: str | None, default):
         return default
 
 
-def _row_to_dict(row: tuple) -> dict:
+def _row_to_dict(row) -> dict:
     (id_, claim_json, fraud_result_json, similar_claims_json,
-     recommendation_json, status, created_at, reviewed_at, warnings_json, similar_summary) = row
+     recommendation_json, status, created_at, reviewed_at, warnings_json, similar_summary,
+     submitted_by, outcome) = row
     return {
         "id": id_,
         "claim": _loads(claim_json, {}),
@@ -141,30 +111,52 @@ def _row_to_dict(row: tuple) -> dict:
         "reviewed_at": reviewed_at,
         "warnings": _loads(warnings_json, []),
         "similar_claims_summary": similar_summary,
+        "submitted_by": submitted_by,
+        "outcome": outcome,
     }
+
+
+def _bounds(limit: int, offset: int) -> tuple[int, int]:
+    return max(1, min(int(limit), 500)), max(0, int(offset))
 
 
 def list_claims(limit: int = 100, offset: int = 0) -> list[dict]:
     """Newest-first page of claims (bounded: the list view never loads the whole table)."""
-    limit = max(1, min(int(limit), 500))
-    offset = max(0, int(offset))
+    limit, offset = _bounds(limit, offset)
     with _connect() as conn:
-        rows = conn.execute(_LIST_SQL, (limit, offset)).fetchall()
+        rows = conn.execute(select(*_COLUMNS).order_by(*_NEWEST_FIRST).limit(limit).offset(offset)).all()
+    return [_row_to_dict(r) for r in rows]
+
+
+def list_claims_for_user(username: str, limit: int = 100, offset: int = 0) -> list[dict]:
+    """Newest-first page of the claims one customer submitted."""
+    limit, offset = _bounds(limit, offset)
+    query = (
+        select(*_COLUMNS)
+        .where(claims.c.submitted_by == username)
+        .order_by(*_NEWEST_FIRST)
+        .limit(limit)
+        .offset(offset)
+    )
+    with _connect() as conn:
+        rows = conn.execute(query).all()
     return [_row_to_dict(r) for r in rows]
 
 
 def get_claim(claim_id: int) -> dict | None:
     """Return one claim or None."""
     with _connect() as conn:
-        row = conn.execute(_GET_SQL, (claim_id,)).fetchone()
+        row = conn.execute(select(*_COLUMNS).where(claims.c.id == claim_id)).first()
     return _row_to_dict(row) if row else None
 
 
-def mark_reviewed(claim_id: int) -> bool:
-    """Flip a pending claim to reviewed. Returns False if it was not pending."""
+def mark_reviewed(claim_id: int, outcome: str | None = None) -> bool:
+    """Flip a pending claim to reviewed, recording the customer-facing outcome
+    ('approved' | 'not_approved'). Returns False if it was not pending."""
     with _connect() as conn:
-        cursor = conn.execute(
-            "UPDATE claims SET status = 'reviewed', reviewed_at = ? WHERE id = ? AND status = 'pending'",
-            (datetime.now(UTC).isoformat(), claim_id),
+        result = conn.execute(
+            update(claims)
+            .where(claims.c.id == claim_id, claims.c.status == "pending")
+            .values(status="reviewed", reviewed_at=now_iso(), outcome=outcome)
         )
-        return cursor.rowcount > 0
+        return result.rowcount > 0

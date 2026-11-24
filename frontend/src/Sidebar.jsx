@@ -1,3 +1,5 @@
+import { PORTFOLIO_URL } from "./claimFields";
+
 const ICONS = {
   claims: (
     <>
@@ -8,6 +10,14 @@ const ICONS = {
     </>
   ),
   analytics: <path d="M3 12l2-2 4 4 8-8 4 4" />,
+  people: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20c.6-3.6 3.3-6 6.5-6s5.9 2.4 6.5 6" />
+      <circle cx="17.5" cy="9" r="2.5" />
+      <path d="M17 14c2.6.2 4.2 2.1 4.5 5" />
+    </>
+  ),
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />
@@ -19,10 +29,11 @@ const ICONS = {
 const NAV = [
   ["claims", "Claims"],
   ["analytics", "Analytics"],
+  ["people", "People"],
   ["settings", "Settings"],
 ];
 
-export default function Sidebar({ onSignOut, section, onNavigate }) {
+export default function Sidebar({ onSignOut, section, onNavigate, currentUser }) {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -49,6 +60,21 @@ export default function Sidebar({ onSignOut, section, onNavigate }) {
           </button>
         ))}
       </nav>
+
+      <a className="sidebar-credit" href={PORTFOLIO_URL} target="_blank" rel="noopener noreferrer">
+        <span>Built by Mukesh Kumar</span>
+        <strong>View portfolio ↗</strong>
+      </a>
+
+      {currentUser && (
+        <div className="sidebar-user">
+          <span className="avatar avatar-sm">{(currentUser.full_name || currentUser.username).slice(0, 2).toUpperCase()}</span>
+          <div>
+            <div className="sidebar-user-name">{currentUser.full_name || currentUser.username}</div>
+            <div className="brand-sub">{currentUser.role}</div>
+          </div>
+        </div>
+      )}
 
       {onSignOut && (
         <button type="button" className="signout-btn" onClick={onSignOut}>

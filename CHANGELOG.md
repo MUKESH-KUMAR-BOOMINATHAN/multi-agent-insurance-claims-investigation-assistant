@@ -3,7 +3,49 @@
 All notable changes to this project are documented here, in the
 [Keep a Changelog](https://keepachangelog.com) format.
 
-## [Unreleased] - production hardening and deployment
+## [Unreleased] - free hosting: Postgres (Neon) and stronger sign-in
+
+### UI
+- **Sign-in redesigned:** a two-panel layout (product summary + form), a show-password toggle, and the same layout for "choose your password" and "connecting / server waking up".
+- **Claims list:** headline tiles that point at what needs attention (pending, high risk not yet reviewed), quick filters (pending, high risk, manual review, reviewed), search, colour-coded risk bars, and who submitted each claim.
+- **Claim detail rebuilt:** a summary header (amount, status, submitter, dates), a fraud-score gauge with its signals, the similar-claims vote as a bar plus per-claim similarity bars, a claim-facts panel, the recommendation with a confidence meter, and the decision as choice cards instead of dropdowns.
+- **New-claim form** grouped into policy, insured person, vehicle, incident and amounts, with the total computed.
+- **Customer portal:** a progress tracker on every claim (filed, under review, decision).
+- Settings shows which database is in use. Dollar amounts always use US digit grouping.
+- All 15 README screenshots retaken from a Postgres-backed, sign-in-on run with data created through the real API.
+
+### Added
+- **Postgres support** via `DATABASE_URL` (built for Neon's free tier), using SQLAlchemy Core: one schema (`db/schema.py`) and one code path for SQLite (local, tests) and Postgres (production). Schema creation and additive migrations run automatically; existing SQLite databases keep their rows. (`db/engine.py`)
+- **Backups.** `scripts/backup_db.py` (full JSON backup from either database) and `scripts/restore_db.py` (into an empty database only; also moves local SQLite data to Neon). `backups/` is git-ignored.
+- **Change your own password** (`POST /auth/password`), from Settings or the customer portal.
+- **Temporary passwords.** New accounts and organization resets must choose their own password at first sign-in; until then every other route answers 403.
+- **Per-account lockout** after 5 consecutive failures (15 minutes), stored in the database so it survives restarts and free-tier sleep; unknown usernames are counted the same way. A reset unlocks.
+- **Activity log** for the admin (`GET /audit`, People page): sign-ins, failures, lockouts, password changes/resets, account changes, claims filed and reviewed; never passwords, tokens or claim contents.
+- Production refuses to start without `DATABASE_URL` (unless `DATA_DIR` explicitly points at a persistent disk), so data can never silently go to a wiped filesystem.
+- The test suite runs against Postgres too (`TEST_DATABASE_URL`); 218 tests.
+
+### Changed
+- **README rewritten for visitors:** the operator runbook (step-by-step deployment, production checklist, troubleshooting, operations, full configuration and API error tables) was removed; added "What makes it different", "What the free-tier deployment leaves out", "What I learned building it" and a tech-stack table. Every setting remains documented in `.env.example`.
+- `render.yaml` now targets the **free** plan with Neon for storage (no disk).
+- `/health` reports which database is configured without querying it, so health checks don't keep a scale-to-zero database awake.
+
+### Fixed
+- **`render.yaml` build would have failed**: it ran `python -m retrieval.warmup`, a module removed with the embeddings index. The step is gone (the similarity index builds at startup in about 0.1 s).
+
+## [0.3.0] - roles and customer portal
+
+### Added
+- **Three roles.** Admin (from environment variables), investigators and customers (stored in a new `users` table). Every route is role-checked; the role is re-read from the account on each request, so deactivation is immediate. (`auth.py`, `db/users_store.py`)
+- **Customer portal.** Customers sign in, see the policy on file, file a claim by describing only the incident and amounts (the server merges the policy details and computes the total), and follow their claims with a plain status: under review, approved or not approved. The fraud score and AI reasoning are never sent to customers. (`POST/GET /my/claims`, `GET /my/policy`, `CustomerPortal.jsx`)
+- **People page** for the organization: create customer accounts with their policy details, create investigator accounts (admin only), reset passwords, activate/deactivate. (`/users` routes, `People.jsx`)
+- Claims record who submitted them and the customer-facing outcome (`submitted_by`, `outcome` columns, migrated in place); the claims list shows *Submitted by*.
+- 23 role tests (197 in total) and a browser walk-through of admin -> investigator -> customer.
+
+### Changed
+- `POST /auth/login` now also returns the account (`user: {username, role, full_name}`); `GET /auth/me` added.
+- Claim form fields are shared between the organization form, the customer form and the new-customer form (`claimFields.js`, `FieldGrid.jsx`).
+
+## [0.2.0] - production hardening and deployment
 
 ### Added
 - **Authentication.** Single operator account: scrypt-hashed password, short-lived signed JWT (HS256, issuer and algorithm pinned), token held in browser memory only. `POST /auth/login` (rate limited, generic errors, no username enumeration timing signal), `GET /auth/config`, and a bearer-token requirement on every `/claims` route. Fail closed: the server refuses to start in production without credentials and refuses `AUTH_DISABLED` there. `scripts/hash_password.py` generates the hash and a JWT secret. (`auth.py`)

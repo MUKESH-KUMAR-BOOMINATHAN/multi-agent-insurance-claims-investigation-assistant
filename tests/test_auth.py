@@ -65,7 +65,7 @@ def test_authenticate_requires_both_username_and_password(auth_on):
 def test_authenticate_fails_when_no_account_is_configured(monkeypatch):
     monkeypatch.setattr(config, "ADMIN_USERNAME", "")
     monkeypatch.setattr(config, "ADMIN_PASSWORD_HASH", "")
-    assert auth.authenticate("", "") is False
+    assert auth.authenticate("", "") is None
 
 
 # --- tokens -----------------------------------------------------------------

@@ -63,6 +63,7 @@ async function request(path, options = {}) {
     const body = await res.json().catch(() => ({}));
     throw new Error(describeError(res.status, body.detail));
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 
@@ -74,12 +75,18 @@ export function getAuthConfig() {
   return request("/auth/config");
 }
 
+// Returns the signed-in account: { username, role, full_name }.
 export async function login(username, password) {
   const body = await request("/auth/login", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
   accessToken = body.access_token;
+  return body.user;
+}
+
+export function getMe() {
+  return request("/auth/me");
 }
 
 export function logout() {
@@ -109,4 +116,47 @@ export function submitFeedback(id, investigatorDecision, confirmedFraudReported)
       confirmed_fraud_reported: confirmedFraudReported,
     }),
   });
+}
+
+// ---- Customer portal -------------------------------------------------------
+export function getMyPolicy() {
+  return request("/my/policy");
+}
+
+export function listMyClaims() {
+  return request("/my/claims");
+}
+
+export function fileClaim(incident) {
+  return request("/my/claims", { method: "POST", body: JSON.stringify(incident) });
+}
+
+// ---- Account management (organization) -------------------------------------
+export function listUsers() {
+  return request("/users");
+}
+
+export function createUser(user) {
+  return request("/users", { method: "POST", body: JSON.stringify(user) });
+}
+
+export function setUserActive(id, active) {
+  return request(`/users/${id}/active`, { method: "POST", body: JSON.stringify({ active }) });
+}
+
+export function resetUserPassword(id, password) {
+  return request(`/users/${id}/password`, { method: "POST", body: JSON.stringify({ password }) });
+}
+
+// ---- Own account -----------------------------------------------------------
+export function changePassword(currentPassword, newPassword) {
+  return request("/auth/password", {
+    method: "POST",
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
+// ---- Admin -------------------------------------------------------------------
+export function getAuditLog(limit = 200) {
+  return request(`/audit?limit=${limit}`);
 }

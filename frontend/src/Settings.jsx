@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getHealth, getSession } from "./api";
 import { applyTheme, loadPrefs, savePrefs } from "./prefs";
+import ChangePassword from "./ChangePassword";
 
 function Row({ label, value, tone }) {
   return (
@@ -16,7 +17,7 @@ function minutesLeft(expiresAt) {
   return mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
 }
 
-function UserSpace({ authRequired, onSignOut }) {
+function UserSpace({ authRequired, onSignOut, currentUser }) {
   const [prefs, setPrefs] = useState(loadPrefs);
   const [saved, setSaved] = useState(false);
   const session = getSession();
@@ -91,6 +92,14 @@ function UserSpace({ authRequired, onSignOut }) {
           <div className="settings-actions">
             <button type="button" onClick={onSignOut}>Sign out</button>
           </div>
+          {currentUser?.role === "admin" ? (
+            <p className="topbar-sub bar-note">
+              The administrator password is set on the server (ADMIN_PASSWORD_HASH). To change it, run
+              scripts/hash_password.py and update the value on your host.
+            </p>
+          ) : (
+            <ChangePassword />
+          )}
         </>
       )}
     </div>
@@ -98,7 +107,7 @@ function UserSpace({ authRequired, onSignOut }) {
 }
 
 // Read-only system status from the public /health endpoint (no secrets are exposed there).
-export default function Settings({ authRequired, onSignOut }) {
+export default function Settings({ authRequired, onSignOut, currentUser }) {
   const [health, setHealth] = useState(null);
   const [error, setError] = useState(null);
 
@@ -113,7 +122,7 @@ export default function Settings({ authRequired, onSignOut }) {
 
   return (
     <>
-      <UserSpace authRequired={authRequired} onSignOut={onSignOut} />
+      <UserSpace authRequired={authRequired} onSignOut={onSignOut} currentUser={currentUser} />
 
       {error && <div className="panel"><p className="error" role="alert">{error}</p></div>}
       {!error && !health && <div className="panel"><p className="topbar-sub">Loading system status…</p></div>}
@@ -133,6 +142,7 @@ export default function Settings({ authRequired, onSignOut }) {
               value={retrieval.ready ? `Ready (${retrieval.documents} claims)` : "Warming up"}
               tone={retrieval.ready ? "" : "bad"}
             />
+            <Row label="Database" value={health.database === "postgres" ? "Postgres" : "SQLite (local files)"} />
             <Row label="Sign-in required" value={yesNo(authRequired)} />
           </div>
 

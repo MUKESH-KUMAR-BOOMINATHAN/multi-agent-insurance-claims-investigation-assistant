@@ -33,7 +33,6 @@ import argparse
 import json
 import logging
 import os
-import sqlite3
 import sys
 from datetime import datetime, UTC
 from pathlib import Path
@@ -93,17 +92,23 @@ def _load_and_clean_original(csv_path: Path) -> pd.DataFrame:
 
 
 def _load_feedback(db_path: Path) -> pd.DataFrame:
-    if not db_path.exists():
+    """Confirmed feedback rows, from Postgres when DATABASE_URL is set, else from ``db_path``."""
+    from sqlalchemy import select
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from db import engine as db_engine
+    from db.schema import feedback
+
+    if not config.DATABASE_URL and not db_path.exists():
         log.info("No feedback DB found at %s — training on original data only.", db_path)
         return pd.DataFrame()
 
-    conn = sqlite3.connect(db_path)
+    engine = db_engine.get_engine(db_engine.url_for(db_path))
     try:
-        rows = conn.execute("SELECT claim_json, confirmed_fraud_reported FROM feedback").fetchall()
-    except sqlite3.OperationalError:
+        with engine.connect() as conn:
+            rows = conn.execute(select(feedback.c.claim_json, feedback.c.confirmed_fraud_reported)).all()
+    except SQLAlchemyError:
         rows = []  # table not created yet
-    finally:
-        conn.close()
 
     if not rows:
         log.info("Feedback DB has no rows yet — training on original data only.")

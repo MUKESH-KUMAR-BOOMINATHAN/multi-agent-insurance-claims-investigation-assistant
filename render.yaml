@@ -1,28 +1,31 @@
 # Render Blueprint for the API (the frontend is deployed separately on Vercel).
 #
 # Deploy: Render dashboard -> New -> Blueprint -> pick this repo. Render then asks
-# for the values marked `sync: false`. See README -> "Deployment" for the full
-# walkthrough, including how to generate ADMIN_PASSWORD_HASH.
+# for the values marked `sync: false` (see README -> "Deploy your own").
 #
-# This file describes the PAID-MINIMUM production setup: a `starter` instance with
-# a persistent disk, so claims and investigator feedback survive restarts and
-# deploys. To try it on the free plan instead, set `plan: free` and delete the
-# `disk:` block and the DATA_DIR variable. The free plan has NO persistent disk
-# (the SQLite files are wiped on every deploy / restart) and sleeps after about
-# 15 minutes idle, so it is a demo setup, not a production one.
+# FREE setup (no cost anywhere):
+#   * Render free web service: sleeps after ~15 min without traffic and takes
+#     about a minute to wake; its filesystem is wiped on every deploy/restart.
+#   * So ALL data lives in a free Postgres database outside Render (Neon's free
+#     tier: https://neon.tech). Put its connection string in DATABASE_URL.
+#     Without DATABASE_URL the app would fall back to SQLite files that are
+#     wiped on every restart: never deploy like that.
+#
+# Upgrading later needs no code change: switch `plan` to a paid instance (no
+# sleep) and/or move DATABASE_URL to a paid database.
 
 services:
   - type: web
     name: claimguard-api
     runtime: python
-    plan: starter
+    plan: free
     region: oregon
-    # One worker only: the Groq budget, circuit breaker, cache and rate limiters
-    # live in process memory (and a persistent disk is attached to one instance).
+    # One worker only: the Groq budget, circuit breaker, cache and per-IP rate
+    # limiters live in process memory. (Account lockouts and the audit log are in
+    # the database, so they survive the free instance going to sleep.)
     buildCommand: >-
       pip install uv &&
-      uv sync --frozen --no-dev &&
-      .venv/bin/python -m retrieval.warmup
+      uv sync --frozen --no-dev
     startCommand: >-
       .venv/bin/uvicorn main:app
       --host 0.0.0.0 --port $PORT --workers 1
@@ -34,10 +37,14 @@ services:
         value: 3.12.8
       - key: ENVIRONMENT
         value: production
+      # Postgres connection string from Neon (Dashboard -> Connect), e.g.
+      # postgresql://user:password@ep-xxx.region.aws.neon.tech/neondb?sslmode=require
+      - key: DATABASE_URL
+        sync: false
       # Random per environment; Render generates it and keeps it stable across deploys.
       - key: JWT_SECRET
         generateValue: true
-      # The single operator account. Hash from `uv run python scripts/hash_password.py`.
+      # The admin account. Hash from `python scripts/hash_password.py`.
       - key: ADMIN_USERNAME
         sync: false
       - key: ADMIN_PASSWORD_HASH
@@ -51,10 +58,3 @@ services:
         value: openai/gpt-oss-20b
       - key: GROQ_REASONING_EFFORT
         value: low
-      # Where the SQLite databases live: the mounted disk below.
-      - key: DATA_DIR
-        value: /var/data
-    disk:
-      name: claimguard-data
-      mountPath: /var/data
-      sizeGB: 1
