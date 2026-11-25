@@ -14,6 +14,9 @@ Endpoints:
     POST /auth/login           credentials -> short-lived bearer token + role
     GET  /auth/me              the signed-in account
     POST /auth/password        change your own password (required after a reset)
+    POST /demo/start           one-click sandbox session as an investigator or customer (if enabled)
+    POST /demo/switch          the same visitor, other role
+    GET  /demo/status          claims used against the demo cap
 
   Organization (admin, investigator):
     POST /claims               submit a new claim -> runs the full pipeline
@@ -51,6 +54,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 import auth
 import config
+import demo
 from agents import fraud_node as fraud_module
 from agents import groq_client
 from agents.feedback_node import DuplicateFeedbackError, feedback_node
@@ -92,11 +96,25 @@ def _warm_retrieval() -> None:
         log.exception("Retrieval warm-up failed; similar-claims evidence will be unavailable until fixed")
 
 
+def _seed_demo_data() -> None:
+    """Create the sample claims once, in the background (it runs the real pipeline)."""
+    try:
+        log.info("Demo data: %s", demo.ensure_seed())
+    except Exception:  # noqa: BLE001 - a missing sample must never take the API down
+        log.exception("Seeding the demo data failed; it will be retried on the next start")
+
+
+def _background_startup() -> None:
+    _warm_retrieval()
+    if config.DEMO_ENABLED:
+        _seed_demo_data()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _validate_runtime_config()
     claims_store.init_db()
-    threading.Thread(target=_warm_retrieval, name="retrieval-warmup", daemon=True).start()
+    threading.Thread(target=_background_startup, name="startup-warmup", daemon=True).start()
     log.info("API started", extra={"environment": config.ENVIRONMENT, "auth_required": auth.auth_required()})
     yield
 
@@ -183,6 +201,12 @@ class FeedbackSubmission(BaseModel):
 
     investigator_decision: Literal["agreed", "overridden_to_approve", "overridden_to_investigate"]
     confirmed_fraud_reported: Literal["Y", "N"]
+
+
+class DemoRoleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["investigator", "customer"]
 
 
 class LoginRequest(BaseModel):
@@ -279,6 +303,7 @@ def health():
         # Configuration only: /health never queries the database, so frequent
         # health checks do not keep a scale-to-zero database (Neon) awake.
         "database": "postgres" if config.DATABASE_URL else "sqlite",
+        "demo_enabled": config.DEMO_ENABLED,
         "retrieval": similarity.status(),
         "llm": groq_client.status(),
     }
@@ -286,8 +311,11 @@ def health():
 
 @app.get("/auth/config")
 def auth_config():
-    """Tells the frontend whether it must show a login screen."""
-    return {"auth_required": auth.auth_required()}
+    """Tells the frontend whether it must show a login screen (and whether the demo is on)."""
+    cfg: dict = {"auth_required": auth.auth_required()}
+    if config.DEMO_ENABLED and auth.auth_required():
+        cfg["demo"] = {"enabled": True, "max_claims": config.DEMO_MAX_CLAIMS, "contact_url": config.DEMO_CONTACT_URL}
+    return cfg
 
 
 @app.post("/auth/login")
@@ -326,12 +354,58 @@ def login(body: LoginRequest, request: Request):
 
 
 def _user_view(user: auth.User) -> dict:
-    return {
+    view = {
         "username": user.username,
         "role": user.role,
         "full_name": user.full_name,
         "must_change_password": user.must_change_password,
     }
+    if user.is_demo:
+        view["demo"] = True
+    return view
+
+
+def _demo_session_response(session_id: str, role: str) -> dict:
+    user = auth.resolve_demo({"sub": demo.SUBJECT_PREFIX + session_id, "demo_role": role})
+    if user is None:  # demo was switched off between the check and here
+        raise HTTPException(status_code=404, detail="The demo is not available")
+    return {
+        "access_token": auth.create_demo_token(session_id, role),
+        "token_type": "bearer",  # nosec B105 - the OAuth token-type label, not a password
+        "expires_in": config.DEMO_TOKEN_TTL_MINUTES * 60,
+        "user": _user_view(user),
+        "demo": demo.usage(session_id),
+    }
+
+
+def _demo_user(user: auth.User) -> auth.User:
+    if not user.is_demo:
+        raise HTTPException(status_code=403, detail="Demo sessions only")
+    return user
+
+
+@app.post("/demo/start")
+def demo_start(body: DemoRoleRequest, request: Request):
+    """One click, no password: a private sandbox as an investigator or a customer."""
+    if not config.DEMO_ENABLED or not auth.auth_required():
+        raise HTTPException(status_code=404, detail="The demo is not available")
+    retry_after = demo.check_start(_client_ip(request))
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429, detail=demo.limit_detail("starts"), headers={"Retry-After": str(int(retry_after) + 1)}
+        )
+    return _demo_session_response(demo.begin_session(), body.role)
+
+
+@app.post("/demo/switch")
+def demo_switch(body: DemoRoleRequest, user: Annotated[auth.User, Depends(auth.require_account)]):
+    """The same visitor and the same sandbox, seen as the other role."""
+    return _demo_session_response(str(_demo_user(user).demo_session), body.role)
+
+
+@app.get("/demo/status")
+def demo_status(user: Annotated[auth.User, Depends(auth.require_account)]):
+    return demo.usage(str(_demo_user(user).demo_session))
 
 
 @app.get("/auth/me")
@@ -348,6 +422,8 @@ def change_password(
 ):
     """Change your own password. Works with a temporary password, so a user
     whose password was set by the organization can replace it."""
+    if user.is_demo:
+        raise HTTPException(status_code=403, detail="Not available in the demo")
     if user.role == "admin":
         raise HTTPException(
             status_code=400,
@@ -378,10 +454,20 @@ def _check_claim_rate(key: str) -> None:
         raise _too_many(retry_after, "Too many claim submissions; slow down.")
 
 
-def _run_pipeline(claim: dict, submitted_by: str) -> dict:
+def _enforce_demo_cap(user: auth.User) -> None:
+    """A demo visitor may file only DEMO_MAX_CLAIMS claims; the 429 carries a contact link."""
+    if claims_store.count_session_claims(str(user.demo_session)) >= config.DEMO_MAX_CLAIMS:
+        raise HTTPException(status_code=429, detail=demo.limit_detail("claims"))
+
+
+def _run_pipeline(claim: dict, submitted_by: str, demo_session: str | None = None) -> dict:
     """Score, retrieve, recommend and persist one claim. A degraded step never
-    raises: every node falls back instead (see graph.py)."""
-    final_state = _graph_app.invoke({"claim": claim})
+    raises: every node falls back instead (see graph.py). A demo claim is saved in
+    its visitor's sandbox and only reaches the LLM while the shared demo allowance lasts."""
+    state_in: dict = {"claim": claim}
+    if demo_session is not None:
+        state_in["use_llm"] = demo.allow_ai()
+    final_state = _graph_app.invoke(state_in)
 
     fraud_result = final_state.get("fraud_result", {})
     similar_claims = final_state.get("similar_claims", [])
@@ -390,7 +476,8 @@ def _run_pipeline(claim: dict, submitted_by: str) -> dict:
     similar_summary = final_state.get("similar_claims_summary")
 
     claim_id = claims_store.insert_claim(
-        claim, fraud_result, similar_claims, recommendation, warnings, similar_summary, submitted_by
+        claim, fraud_result, similar_claims, recommendation, warnings, similar_summary, submitted_by,
+        demo_session=demo_session,
     )
     return {
         "id": claim_id,
@@ -411,16 +498,23 @@ def submit_claim(
 ):
     """Organization submits a full claim (all 32 fields) and sees the full analysis."""
     _check_claim_rate(_client_ip(request))
+    if user.is_demo:
+        _enforce_demo_cap(user)
+        return _run_pipeline(submission.model_dump(by_alias=True), user.username, demo_session=user.demo_session)
     result = _run_pipeline(submission.model_dump(by_alias=True), submitted_by=user.username)
     security_store.audit("claim_submitted", actor=user.username, target=f"claim:{result['id']}")
     return result
 
 
-@app.get("/claims", dependencies=[Depends(auth.require_org)])
-def get_claims(limit: Annotated[int, Query(ge=1, le=500)] = 100, offset: Annotated[int, Query(ge=0)] = 0):
+@app.get("/claims")
+def get_claims(
+    user: Annotated[auth.User, Depends(auth.require_org)],
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
     """Summary list for the dashboard — trims claim/similar_claims detail
     since the list view only needs status + top-line numbers."""
-    claims = claims_store.list_claims(limit=limit, offset=offset)
+    claims = claims_store.list_claims(limit=limit, offset=offset, session=user.demo_session)
     return [
         {
             "id": c["id"],
@@ -439,10 +533,11 @@ def get_claims(limit: Annotated[int, Query(ge=1, le=500)] = 100, offset: Annotat
     ]
 
 
-@app.get("/claims/{claim_id}", dependencies=[Depends(auth.require_org)])
-def get_claim_detail(claim_id: int):
+@app.get("/claims/{claim_id}")
+def get_claim_detail(claim_id: int, user: Annotated[auth.User, Depends(auth.require_org)]):
     claim = claims_store.get_claim(claim_id)
-    if claim is None:
+    # 404 (not 403) for another visitor's sandbox claim: don't confirm it exists.
+    if claim is None or not claims_store.is_visible(claim, user.demo_session):
         raise HTTPException(status_code=404, detail=f"Claim {claim_id} not found")
     return claim
 
@@ -454,10 +549,18 @@ def submit_feedback(
     user: Annotated[auth.User, Depends(auth.require_org)],
 ):
     claim_record = claims_store.get_claim(claim_id)
-    if claim_record is None:
+    if claim_record is None or not claims_store.is_visible(claim_record, user.demo_session):
         raise HTTPException(status_code=404, detail=f"Claim {claim_id} not found")
     if claim_record["status"] == "reviewed":
         raise HTTPException(status_code=409, detail=f"Claim {claim_id} was already reviewed")
+
+    if user.is_demo:
+        # A sandbox decision is never saved as feedback: it must not change the
+        # similar-claims evidence or the data the model is retrained on.
+        if claim_record.get("demo_session") != user.demo_session:
+            raise HTTPException(status_code=403, detail="Sample claims are read-only. Review one of your own claims.")
+        claims_store.mark_reviewed(claim_id, _outcome(feedback))
+        return {"status": "ok", "feedback_id": None, "indexed": False, "demo": True}
 
     try:
         result = feedback_node(
@@ -505,6 +608,8 @@ def _customer_view(c: dict) -> dict:
 
 
 def _customer_profile(user: auth.User) -> dict:
+    if user.is_demo:
+        return demo.DEMO_PROFILE
     account = users_store.get_active_user(user.username)
     profile = (account or {}).get("profile")
     if not profile:
@@ -531,7 +636,9 @@ def file_claim(
 ):
     """A customer files a claim: their incident details + the policy on file.
     The total is computed here, never trusted from the client."""
-    _check_claim_rate(f"customer:{user.username}")
+    _check_claim_rate(f"demo:{user.demo_session}" if user.is_demo else f"customer:{user.username}")
+    if user.is_demo:
+        _enforce_demo_cap(user)
     details = incident.model_dump(by_alias=True)
     details["total_claim_amount"] = details["injury_claim"] + details["property_claim"] + details["vehicle_claim"]
     try:
@@ -541,8 +648,9 @@ def file_claim(
         raise HTTPException(
             status_code=409, detail="Your policy details need updating. Please contact your insurer."
         ) from None
-    result = _run_pipeline(claim, submitted_by=user.username)
-    security_store.audit("claim_filed", actor=user.username, target=f"claim:{result['id']}")
+    result = _run_pipeline(claim, submitted_by=user.username, demo_session=user.demo_session)
+    if not user.is_demo:
+        security_store.audit("claim_filed", actor=user.username, target=f"claim:{result['id']}")
     stored = claims_store.get_claim(result["id"])
     if stored is None:  # just inserted; only a concurrently deleted database could do this
         raise HTTPException(status_code=500, detail="Claim could not be saved")
@@ -555,7 +663,8 @@ def my_claims(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
-    return [_customer_view(c) for c in claims_store.list_claims_for_user(user.username, limit, offset)]
+    rows = claims_store.list_claims_for_user(user.username, limit, offset, session=user.demo_session)
+    return [_customer_view(c) for c in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -575,12 +684,12 @@ def _managed_user_or_404(user_id: int, actor: auth.User) -> dict:
 
 
 @app.get("/users")
-def list_users(actor: Annotated[auth.User, Depends(auth.require_org)]):
+def list_users(actor: Annotated[auth.User, Depends(auth.require_real_org)]):
     return users_store.list_users(_manageable_roles(actor))
 
 
 @app.post("/users", status_code=201)
-def create_user(body: CreateUserRequest, actor: Annotated[auth.User, Depends(auth.require_org)]):
+def create_user(body: CreateUserRequest, actor: Annotated[auth.User, Depends(auth.require_real_org)]):
     if body.role not in _manageable_roles(actor):
         raise HTTPException(status_code=403, detail="Only the administrator can create investigator accounts")
     if body.role == "customer" and body.profile is None:
@@ -607,7 +716,7 @@ def create_user(body: CreateUserRequest, actor: Annotated[auth.User, Depends(aut
 
 @app.post("/users/{user_id}/active")
 def set_user_active(
-    user_id: int, body: SetActiveRequest, actor: Annotated[auth.User, Depends(auth.require_org)]
+    user_id: int, body: SetActiveRequest, actor: Annotated[auth.User, Depends(auth.require_real_org)]
 ):
     target = _managed_user_or_404(user_id, actor)
     users_store.set_active(user_id, body.active)
@@ -618,7 +727,7 @@ def set_user_active(
 
 @app.post("/users/{user_id}/password", status_code=204)
 def reset_user_password(
-    user_id: int, body: SetPasswordRequest, actor: Annotated[auth.User, Depends(auth.require_org)]
+    user_id: int, body: SetPasswordRequest, actor: Annotated[auth.User, Depends(auth.require_real_org)]
 ):
     target = _managed_user_or_404(user_id, actor)
     # The organization chose this password, so the user must replace it at next sign-in.

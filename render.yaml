@@ -54,6 +54,10 @@ services:
       # Your Vercel URL(s), comma separated, no trailing slash, e.g. https://claimguard.vercel.app
       - key: CORS_ORIGINS
         sync: false
+      # Public one-click demo (private sandbox per visitor, capped; see README -> "Try it live").
+      # Set to "false" (or delete it) to switch the demo off.
+      - key: DEMO_ENABLED
+        value: "true"
       - key: GROQ_MODEL
         value: openai/gpt-oss-20b
       - key: GROQ_REASONING_EFFORT

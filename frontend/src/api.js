@@ -7,9 +7,23 @@ const API_BASE = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").repla
 // page refresh signs you out, which is the intended trade-off for an internal tool.
 let accessToken = null;
 let onUnauthorized = () => {};
+let onDemoLimit = () => {};
 
 export function setUnauthorizedHandler(handler) {
   onUnauthorized = handler;
+}
+
+// Called when the public demo's claim cap is reached, so the app can offer a next step.
+export function setDemoLimitHandler(handler) {
+  onDemoLimit = handler;
+}
+
+export class ApiError extends Error {
+  constructor(message, extra = {}) {
+    super(message);
+    this.name = "ApiError";
+    Object.assign(this, extra);
+  }
 }
 
 // Display-only: reads the username and expiry from the token payload. The server
@@ -38,6 +52,7 @@ function describeError(status, detail) {
       .join("; ");
   }
   if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object" && typeof detail.message === "string") return detail.message;
   if (status === 429) return "Too many requests — please wait a moment and try again.";
   return `Request failed (${status})`;
 }
@@ -61,7 +76,19 @@ async function request(path, options = {}) {
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(describeError(res.status, body.detail));
+    const detail = body.detail;
+    if (detail && typeof detail === "object" && detail.code === "demo_limit") {
+      const err = new ApiError(describeError(res.status, detail), {
+        status: res.status,
+        code: "demo_limit",
+        kind: detail.kind,
+        contactUrl: detail.contact_url,
+      });
+      // Only the claim cap is worth a dialog; "going too fast" is an inline message.
+      if (detail.kind === "claims") onDemoLimit(err);
+      throw err;
+    }
+    throw new ApiError(describeError(res.status, detail), { status: res.status });
   }
   if (res.status === 204) return null;
   return res.json();
@@ -83,6 +110,25 @@ export async function login(username, password) {
   });
   accessToken = body.access_token;
   return body.user;
+}
+
+// ---- Public demo -------------------------------------------------------------
+// One click, no password: a private sandbox as an investigator or a customer.
+export async function startDemo(role) {
+  const body = await request("/demo/start", { method: "POST", body: JSON.stringify({ role }) });
+  accessToken = body.access_token;
+  return body;
+}
+
+// The same visitor and sandbox, seen as the other role.
+export async function switchDemoRole(role) {
+  const body = await request("/demo/switch", { method: "POST", body: JSON.stringify({ role }) });
+  accessToken = body.access_token;
+  return body;
+}
+
+export function getDemoStatus() {
+  return request("/demo/status");
 }
 
 export function getMe() {

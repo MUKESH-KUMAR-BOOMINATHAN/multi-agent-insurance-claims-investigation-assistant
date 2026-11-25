@@ -764,3 +764,48 @@ section ul {
 }
 .sidebar-credit { display: flex; flex-direction: column; gap: 2px; line-height: 1.35; }
 .sidebar-credit strong { color: var(--primary-dark); font-weight: 600; font-size: 12px; }
+
+/* ---------- Public demo ---------- */
+.demo-bar { position: sticky; top: 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 18px; padding: 9px 24px; background: var(--primary-light); color: var(--text); border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.demo-bar-main { display: flex; align-items: center; gap: 10px; }
+.demo-tag { background: var(--primary); color: #fff; font-weight: 700; font-size: 11px; letter-spacing: 0.08em; padding: 3px 8px; border-radius: 999px; }
+.demo-bar-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.demo-bar-actions a { color: var(--primary-dark); font-weight: 600; text-decoration: none; }
+.demo-bar-actions a:hover { text-decoration: underline; }
+.demo-bar-actions button { padding: 5px 11px; font-size: 13px; }
+.demo-usage { font-weight: 600; background: var(--surface); border: 1px solid var(--border); padding: 3px 10px; border-radius: 999px; }
+.demo-usage-full { background: var(--warning-light); border-color: var(--warning); }
+.demo-bar-error { flex-basis: 100%; color: var(--danger); font-size: 13px; }
+
+.demo-box { display: flex; flex-direction: column; gap: 12px; }
+.login-form { display: flex; flex-direction: column; gap: 16px; }
+.demo-roles { display: grid; gap: 10px; }
+.demo-role { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 13px 15px; background: var(--surface-alt); border: 1.5px solid var(--border); border-radius: 12px; cursor: pointer; font: inherit; color: var(--text); transition: border-color 0.15s, background 0.15s; }
+.demo-role strong { font-size: 15px; color: var(--primary-dark); }
+.demo-role span { font-size: 12.5px; color: var(--text-muted); line-height: 1.4; }
+.demo-role:hover:not(:disabled) { border-color: var(--primary); background: var(--primary-light); }
+.demo-role:disabled { opacity: 0.65; cursor: wait; }
+.demo-divider { display: flex; align-items: center; gap: 12px; margin-top: 6px; color: var(--text-muted); font-size: 12.5px; }
+.demo-divider::before, .demo-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+.modal-backdrop { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(20, 30, 25, 0.55); }
+.modal { width: 100%; max-width: 460px; background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 28px 30px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25); display: flex; flex-direction: column; gap: 12px; }
+.modal h2 { margin: 0; font-family: "Plus Jakarta Sans", sans-serif; font-size: 21px; }
+.modal p { margin: 0; line-height: 1.5; font-size: 14.5px; }
+.modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+a.primary-btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+
+/* ---------- Cold start ("waking up the free server") ---------- */
+.wake-card { align-items: center; text-align: center; max-width: 440px; }
+.wake-lead { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--text); }
+.wake-bar { width: 100%; height: 6px; border-radius: 999px; background: var(--primary-light); overflow: hidden; position: relative; }
+.wake-bar span { position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: 999px; background: var(--primary); animation: wake-slide 1.6s ease-in-out infinite; }
+@keyframes wake-slide { 0% { left: -35%; } 100% { left: 100%; } }
+.wake-meta { margin: 0; }
+@media (prefers-reduced-motion: reduce) { .wake-bar span { animation: none; width: 100%; opacity: 0.5; } }
+
+/* Overrides for the global h1/h2 letter-spacing, which squeezes these titles. */
+.auth-card .login-title, .modal h2 { letter-spacing: -0.01em; }
+a.primary-btn { padding: 7px 16px; border: 1px solid var(--primary); border-radius: 8px; font-size: 13px; font-weight: 600; background: var(--primary); color: #fff; }
+a.primary-btn:hover { background: var(--primary-dark); }
+.modal-actions a.primary-btn, .modal-actions button { padding: 10px 18px; font-size: 14px; border-radius: 10px; }

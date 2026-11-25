@@ -92,7 +92,11 @@ function UserSpace({ authRequired, onSignOut, currentUser }) {
           <div className="settings-actions">
             <button type="button" onClick={onSignOut}>Sign out</button>
           </div>
-          {currentUser?.role === "admin" ? (
+          {currentUser?.demo ? (
+            <p className="topbar-sub bar-note">
+              This is a demo session: there is no account or password. It ends automatically after an hour.
+            </p>
+          ) : currentUser?.role === "admin" ? (
             <p className="topbar-sub bar-note">
               The administrator password is set on the server (ADMIN_PASSWORD_HASH). To change it, run
               scripts/hash_password.py and update the value on your host.

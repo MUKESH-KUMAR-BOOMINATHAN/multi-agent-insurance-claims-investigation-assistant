@@ -32,7 +32,12 @@ claims = Table(
     Column("similar_summary", Text),
     Column("submitted_by", String(50)),
     Column("outcome", String(20)),
+    # NULL for real claims. "seed" = shared sample data, "template" = hidden source
+    # for a new visitor's starter claims, anything else = one demo visitor's private
+    # sandbox (see demo.py). Real lists never include sandbox rows.
+    Column("demo_session", String(40)),
     Index("idx_claims_submitted_by", "submitted_by"),
+    Index("idx_claims_demo_session", "demo_session"),
 )
 
 # Accounts created by the organization. The admin is NOT stored here: it comes

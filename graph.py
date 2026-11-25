@@ -36,6 +36,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 class GraphState(TypedDict, total=False):
     claim: dict
+    # False = do not call the LLM for this claim (rules-based recommendation instead).
+    use_llm: bool
     fraud_result: dict
     similar_claims: list
     similar_claims_summary: str
@@ -91,7 +93,11 @@ def recommendation_node_step(state: GraphState) -> dict:
         recommendation = rules_recommendation(dict(state), "unexpected_error")
 
     warnings: list[str] = []
-    if recommendation.get("source") == "rules_fallback":
+    if recommendation.get("fallback_reason") == "demo_ai_limit":
+        warnings.append(
+            "The demo's shared daily AI allowance is used up, so a rules-based recommendation was used."
+        )
+    elif recommendation.get("source") == "rules_fallback":
         warnings.append(
             "AI recommendation unavailable "
             f"({recommendation.get('fallback_reason', 'unknown')}); a rules-based recommendation was used."

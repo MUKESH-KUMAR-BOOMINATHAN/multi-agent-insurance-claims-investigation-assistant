@@ -3,6 +3,8 @@ import { fileClaim, getMyPolicy, listMyClaims } from "./api";
 import { DEFAULT_CLAIM, PORTFOLIO_URL, pick } from "./claimFields";
 import FieldGrid from "./FieldGrid";
 import ChangePassword from "./ChangePassword";
+import DemoBar from "./DemoBar";
+import useHashRoute from "./useHashRoute";
 
 // What a customer is told about each status. The portal never shows the fraud
 // score or the AI's reasoning (the API does not even send them).
@@ -119,14 +121,19 @@ function IncidentForm({ onFiled, onCancel }) {
   );
 }
 
-export default function CustomerPortal({ user, onSignOut }) {
+export default function CustomerPortal({ user, onSignOut, onSwitchRole }) {
   const [claims, setClaims] = useState([]);
   const [policy, setPolicy] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [filing, setFiling] = useState(false);
   const [justFiled, setJustFiled] = useState(null);
-  const [changingPassword, setChangingPassword] = useState(false);
+  const isDemo = Boolean(user?.demo);
+
+  // The filing form and the password panel are screens of their own (#file, #password), so the
+  // browser's Back button closes them instead of leaving the portal.
+  const [hash, go, back] = useHashRoute();
+  const filing = hash === "file";
+  const changingPassword = hash === "password" && !isDemo;
 
   const load = () =>
     Promise.all([listMyClaims(), getMyPolicy()])
@@ -143,7 +150,7 @@ export default function CustomerPortal({ user, onSignOut }) {
   }, []);
 
   const handleFiled = (claim) => {
-    setFiling(false);
+    go("claims", { replace: true }); // Back from the list must not return to the finished form
     setJustFiled(claim);
     setClaims((prev) => [claim, ...prev]);
   };
@@ -151,6 +158,8 @@ export default function CustomerPortal({ user, onSignOut }) {
   const firstName = (user?.full_name || user?.username || "").split(" ")[0];
 
   return (
+    <>
+    {isDemo && <DemoBar role={user.role} onSwitch={onSwitchRole} onExit={onSignOut} refreshKey={claims.length} />}
     <div className="portal">
       <header className="portal-bar">
         <div className="sidebar-brand portal-brand">
@@ -162,8 +171,12 @@ export default function CustomerPortal({ user, onSignOut }) {
         </div>
         <div className="portal-user">
           <span>{user?.full_name || user?.username}</span>
-          <button type="button" onClick={() => setChangingPassword((v) => !v)}>Change password</button>
-          <button type="button" onClick={onSignOut}>Sign out</button>
+          {!isDemo && (
+            <button type="button" onClick={() => (changingPassword ? back("claims") : go("password"))}>
+              Change password
+            </button>
+          )}
+          <button type="button" onClick={onSignOut}>{isDemo ? "Exit demo" : "Sign out"}</button>
         </div>
       </header>
 
@@ -174,7 +187,7 @@ export default function CustomerPortal({ user, onSignOut }) {
             <p className="topbar-sub">File a claim and follow its progress here.</p>
           </div>
           {!filing && (
-            <button className="primary-btn" onClick={() => { setFiling(true); setJustFiled(null); }}>
+            <button className="primary-btn" onClick={() => { go("file"); setJustFiled(null); }}>
               + File a new claim
             </button>
           )}
@@ -182,7 +195,7 @@ export default function CustomerPortal({ user, onSignOut }) {
 
         {changingPassword && (
           <div className="panel">
-            <ChangePassword onCancel={() => setChangingPassword(false)} />
+            <ChangePassword onCancel={() => back("claims")} />
           </div>
         )}
 
@@ -195,7 +208,7 @@ export default function CustomerPortal({ user, onSignOut }) {
         )}
 
         {filing ? (
-          <IncidentForm onFiled={handleFiled} onCancel={() => setFiling(false)} />
+          <IncidentForm onFiled={handleFiled} onCancel={() => back("claims")} />
         ) : (
           <>
             <div className="panel">
@@ -232,5 +245,6 @@ export default function CustomerPortal({ user, onSignOut }) {
         <a href={PORTFOLIO_URL} target="_blank" rel="noopener noreferrer">Portfolio ↗</a>
       </footer>
     </div>
+    </>
   );
 }

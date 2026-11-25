@@ -271,8 +271,10 @@ export default function ClaimDetail({ claimId, onBack, onFeedbackSubmitted }) {
                   {claim.outcome === "not_approved" ? "Confirmed fraud · not approved" : "Genuine · approved"}
                 </span>
                 <p className="topbar-sub">
-                  Decided {when(claim.reviewed_at)}. The customer sees this outcome, and the confirmed claim now
-                  informs future similar-claim evidence.
+                  Decided {when(claim.reviewed_at)}. The customer sees this outcome
+                  {claim.demo_session
+                    ? ". This is a demo claim: its decision is not used to retrain the model or as evidence for other claims."
+                    : ", and the confirmed claim now informs future similar-claim evidence."}
                 </p>
               </div>
             ) : (

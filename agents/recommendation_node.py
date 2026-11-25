@@ -306,6 +306,11 @@ def recommendation_node(state: dict) -> dict:
         new_state["recommendation"] = rules_recommendation(state, "unscorable_claim")
         return new_state
 
+    if state.get("use_llm") is False:
+        # The caller (e.g. the shared demo AI allowance) asked for no API call.
+        new_state["recommendation"] = rules_recommendation(state, "demo_ai_limit")
+        return new_state
+
     try:
         recommendation = _ask_groq(state)
     except LLMUnavailable as exc:

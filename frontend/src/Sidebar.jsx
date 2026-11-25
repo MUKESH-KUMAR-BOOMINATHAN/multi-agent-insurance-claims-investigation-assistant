@@ -34,6 +34,8 @@ const NAV = [
 ];
 
 export default function Sidebar({ onSignOut, section, onNavigate, currentUser }) {
+  // Accounts are not part of the public demo, so a demo visitor has no People page.
+  const nav = NAV.filter(([key]) => !(key === "people" && currentUser?.demo));
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -45,7 +47,7 @@ export default function Sidebar({ onSignOut, section, onNavigate, currentUser })
       </div>
 
       <nav className="sidebar-nav">
-        {NAV.map(([key, label]) => (
+        {nav.map(([key, label]) => (
           <button
             type="button"
             key={key}
@@ -71,7 +73,7 @@ export default function Sidebar({ onSignOut, section, onNavigate, currentUser })
           <span className="avatar avatar-sm">{(currentUser.full_name || currentUser.username).slice(0, 2).toUpperCase()}</span>
           <div>
             <div className="sidebar-user-name">{currentUser.full_name || currentUser.username}</div>
-            <div className="brand-sub">{currentUser.role}</div>
+            <div className="brand-sub">{currentUser.demo ? `${currentUser.role} (demo)` : currentUser.role}</div>
           </div>
         </div>
       )}

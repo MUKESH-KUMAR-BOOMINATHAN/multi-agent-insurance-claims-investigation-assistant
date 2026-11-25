@@ -138,6 +138,26 @@ LOGIN_ATTEMPTS_PER_MINUTE = _env_int("LOGIN_ATTEMPTS_PER_MINUTE", 5)
 LOCKOUT_AFTER_FAILURES = _env_int("LOCKOUT_AFTER_FAILURES", 5)
 LOCKOUT_MINUTES = _env_int("LOCKOUT_MINUTES", 15)
 
+# --- Public demo (sandbox) ----------------------------------------------------
+# One-click, password-free access for people who open the live link. Each visitor
+# gets a private sandbox: their own claims, hidden from everyone else, never used
+# for retraining or similar-claims evidence, and purged after DEMO_DATA_TTL_HOURS.
+# Off by default; turn it off at any time by unsetting DEMO_ENABLED.
+DEMO_ENABLED = _env_bool("DEMO_ENABLED", False)
+DEMO_MAX_CLAIMS = _env_int("DEMO_MAX_CLAIMS", 5)  # claims one visitor may file
+DEMO_TOKEN_TTL_MINUTES = _env_int("DEMO_TOKEN_TTL_MINUTES", 60)
+DEMO_REQUESTS_PER_MINUTE = _env_int("DEMO_REQUESTS_PER_MINUTE", 90)  # per visitor
+DEMO_STARTS_PER_HOUR_PER_IP = _env_int("DEMO_STARTS_PER_HOUR_PER_IP", 12)
+# Across ALL visitors, so spreading starts over many addresses cannot grow the database unboundedly.
+DEMO_STARTS_PER_HOUR_TOTAL = _env_int("DEMO_STARTS_PER_HOUR_TOTAL", 200)
+# Shared across ALL visitors: past this, demo claims get the rules-based
+# recommendation instead of a Groq call, so the demo can never drain the real budget.
+DEMO_AI_CALLS_PER_DAY = _env_int("DEMO_AI_CALLS_PER_DAY", 60)
+DEMO_DATA_TTL_HOURS = _env_int("DEMO_DATA_TTL_HOURS", 24)
+DEMO_SEED_CLAIMS = _env_int("DEMO_SEED_CLAIMS", 24)  # sample claims that fill the dashboards
+# Where visitors who hit a demo limit are sent.
+DEMO_CONTACT_URL = os.getenv("DEMO_CONTACT_URL", "https://a-iportfolio-sigma.vercel.app/").strip()
+
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # "json" (one event per line, for log aggregators) or "text". JSON in production.
 LOG_FORMAT = os.getenv("LOG_FORMAT", "json" if IS_PRODUCTION else "text").strip().lower()

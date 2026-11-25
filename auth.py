@@ -13,6 +13,10 @@ Roles
   * customer      a policyholder created by the organization. Can file claims and
                   see only their own claims, with a plain status (never the fraud
                   score or the AI's reasoning).
+  * demo visitor  not an account at all: a short-lived signed token for a throwaway
+                  investigator or customer identity, issued by POST /demo/start (see
+                  demo.py). It can only reach its own sandbox and is refused every
+                  account-management route.
 
 The role is NOT trusted from the token: every request re-reads the account, so a
 deactivated user is locked out immediately, not when their token expires.
@@ -48,6 +52,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request
 
 import config
+import demo
 from db import users_store
 
 log = logging.getLogger(__name__)
@@ -104,10 +109,16 @@ class User:
     # True while the account still has a password someone else chose (new
     # account, reset). Such a token may only change the password.
     must_change_password: bool = False
+    # Set only for a demo visitor: the id of their private sandbox.
+    demo_session: str | None = None
 
     @property
     def is_org(self) -> bool:
         return self.role in ("admin", "investigator")
+
+    @property
+    def is_demo(self) -> bool:
+        return self.demo_session is not None
 
 
 def _is_admin_username(username: str) -> bool:
@@ -168,33 +179,61 @@ def is_reserved_username(username: str) -> bool:
 # ---------------------------------------------------------------------------
 # Tokens
 # ---------------------------------------------------------------------------
-def create_token(subject: str, role: str | None = None) -> str:
-    """Issue a signed token for ``subject`` valid for TOKEN_TTL_MINUTES.
+def create_token(subject: str, role: str | None = None, ttl_minutes: int | None = None, extra: dict | None = None) -> str:
+    """Issue a signed token for ``subject`` valid for TOKEN_TTL_MINUTES (or ``ttl_minutes``).
 
     ``role`` is included for the client's convenience only; the server always
-    re-reads the account (see :func:`require_user`).
+    re-reads the account (see :func:`require_user`). ``extra`` is for the demo token.
     """
     now = datetime.now(UTC)
     payload = {
+        **(extra or {}),
         "sub": subject,
         **({"role": role} if role else {}),
         "iss": ISSUER,
         "iat": now,
-        "exp": now + timedelta(minutes=config.TOKEN_TTL_MINUTES),
+        "exp": now + timedelta(minutes=ttl_minutes or config.TOKEN_TTL_MINUTES),
     }
     return jwt.encode(payload, config.JWT_SECRET, algorithm=ALGORITHM)
 
 
-def decode_token(token: str) -> str:
-    """Return the token's subject, or raise ``jwt.PyJWTError`` if it is invalid/expired."""
-    claims = jwt.decode(
+def create_demo_token(session_id: str, role: str) -> str:
+    """A short-lived token for a demo visitor's sandbox. The role is read back from the
+    token (it is signed, and a demo role grants nothing beyond the sandbox)."""
+    return create_token(
+        demo.SUBJECT_PREFIX + session_id, role, ttl_minutes=config.DEMO_TOKEN_TTL_MINUTES, extra={"demo_role": role}
+    )
+
+
+def decode_claims(token: str) -> dict:
+    """Verified claims of a token, or raise ``jwt.PyJWTError`` if it is invalid/expired."""
+    return jwt.decode(
         token,
         config.JWT_SECRET,
         algorithms=[ALGORITHM],  # pinned: never trust the token's own "alg" header
         issuer=ISSUER,
         options={"require": ["exp", "iat", "sub", "iss"]},
     )
-    return str(claims["sub"])
+
+
+def decode_token(token: str) -> str:
+    """Return the token's subject, or raise ``jwt.PyJWTError`` if it is invalid/expired."""
+    return str(decode_claims(token)["sub"])
+
+
+def resolve_demo(claims: dict) -> User | None:
+    """The demo visitor a token stands for, or None (demo off, or a malformed token)."""
+    subject = str(claims.get("sub", ""))
+    session_id = subject.removeprefix(demo.SUBJECT_PREFIX)
+    role = claims.get("demo_role")
+    if not config.DEMO_ENABLED or not demo.is_valid_session_id(session_id) or role not in demo.ROLES:
+        return None
+    return User(
+        username=f"demo.{role}",
+        role=role,
+        full_name="Demo Investigator" if role == "investigator" else "Alex Rivera",
+        demo_session=session_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -221,12 +260,24 @@ def require_account(request: Request) -> User:
     if scheme.lower() != "bearer" or not token.strip():
         raise HTTPException(status_code=401, detail="Not authenticated", headers=challenge)
     try:
-        subject = decode_token(token.strip())
+        claims = decode_claims(token.strip())
     except jwt.PyJWTError:
         # Same message for expired / tampered / wrong issuer: don't help an attacker.
         raise HTTPException(status_code=401, detail="Invalid or expired token", headers=challenge) from None
-    user = resolve_user(subject)
-    if user is None:  # account deactivated (or removed) since the token was issued
+    subject = str(claims["sub"])
+    if subject.startswith(demo.SUBJECT_PREFIX):
+        user = resolve_demo(claims)
+        if user is not None:
+            retry_after = demo.request_limiter.check(str(user.demo_session))
+            if retry_after is not None:
+                raise HTTPException(
+                    status_code=429,
+                    detail=demo.limit_detail("rate"),
+                    headers={"Retry-After": str(int(retry_after) + 1)},
+                )
+    else:
+        user = resolve_user(subject)
+    if user is None:  # account deactivated (or removed) since the token was issued, or demo switched off
         raise HTTPException(status_code=401, detail="Invalid or expired token", headers=challenge)
     return user
 
@@ -242,6 +293,14 @@ def require_org(user: Annotated[User, Depends(require_user)]) -> User:
     """Dependency: admin or investigator."""
     if not user.is_org:
         raise HTTPException(status_code=403, detail="Organization access only")
+    return user
+
+
+def require_real_org(user: Annotated[User, Depends(require_org)]) -> User:
+    """Dependency: admin or investigator with a real account. A demo visitor is refused:
+    accounts are not theirs to create, reset or list."""
+    if user.is_demo:
+        raise HTTPException(status_code=403, detail="Not available in the demo")
     return user
 
 
