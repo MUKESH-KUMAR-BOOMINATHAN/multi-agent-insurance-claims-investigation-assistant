@@ -14,6 +14,7 @@ const when = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle
 export default function ClaimsList({ claims, loading, error, onSelect, onRefresh }) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
   const perPage = loadPrefs().rowsPerPage;
 
   const q = query.trim().toLowerCase();
@@ -25,7 +26,10 @@ export default function ClaimsList({ claims, loading, error, onSelect, onRefresh
     (c.recommendation || "").toLowerCase().includes(q);
   const test = FILTERS.find(([k]) => k === filter)[2];
   const visible = claims.filter((c) => test(c) && matches(c));
-  const shown = visible.slice(0, perPage);
+  const pageCount = Math.max(1, Math.ceil(visible.length / perPage));
+  const current = Math.min(page, pageCount); // stays valid when filters shrink the list
+  const start = (current - 1) * perPage;
+  const shown = visible.slice(start, start + perPage);
 
   return (
     <div className="panel">
@@ -33,14 +37,14 @@ export default function ClaimsList({ claims, loading, error, onSelect, onRefresh
         <div className="chips" role="tablist" aria-label="Filter claims">
           {FILTERS.map(([key, label, fn]) => (
             <button key={key} type="button" role="tab" aria-selected={filter === key}
-              className={`chip ${filter === key ? "chip-on" : ""}`} onClick={() => setFilter(key)}>
+              className={`chip ${filter === key ? "chip-on" : ""}`} onClick={() => { setFilter(key); setPage(1); }}>
               {label} <span className="chip-n">{claims.filter(fn).length}</span>
             </button>
           ))}
         </div>
         <div className="list-tools">
           <input className="search" type="search" placeholder="Search id, type, customer…"
-            value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search claims" />
+            value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} aria-label="Search claims" />
           <button type="button" onClick={onRefresh}>Refresh</button>
         </div>
       </div>
@@ -119,9 +123,16 @@ export default function ClaimsList({ claims, loading, error, onSelect, onRefresh
         </div>
       )}
       {visible.length > perPage && (
-        <p className="topbar-sub bar-note">
-          Showing {perPage} of {visible.length} claims (change the page size in Settings).
-        </p>
+        <nav className="pager" aria-label="Claims pages">
+          <span className="pager-info">
+            {start + 1}–{start + shown.length} of {visible.length}
+          </span>
+          <div className="pager-btns">
+            <button type="button" onClick={() => setPage(current - 1)} disabled={current <= 1}>← Previous</button>
+            <span className="pager-page">Page {current} of {pageCount}</span>
+            <button type="button" onClick={() => setPage(current + 1)} disabled={current >= pageCount}>Next →</button>
+          </div>
+        </nav>
       )}
     </div>
   );

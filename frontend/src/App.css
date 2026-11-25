@@ -1009,3 +1009,29 @@ img, svg { max-width: 100%; }
 /* Sign-in tucked below the demo */
 .signin-link { margin: 2px 0 0; text-align: center; font-size: 13.5px; color: var(--text-muted); }
 .signin-link .link-btn { font-weight: 600; }
+
+/* ---------- Claims list pager ---------- */
+.pager { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.pager-info, .pager-page { font-size: 13px; color: var(--text-muted); }
+.pager-btns { display: flex; align-items: center; gap: 12px; }
+@media (max-width: 520px) { .pager { justify-content: center; } .pager-btns { width: 100%; justify-content: space-between; } }
+
+/* ---------- Demo bar: dropdown menu on phones ---------- */
+.demo-menu-btn, .demo-usage-mobile, .demo-text-short { display: none; }
+@media (max-width: 800px) {
+  .demo-bar { flex-wrap: nowrap; align-items: center; gap: 10px; padding: 8px 16px; position: relative; }
+  .demo-bar-main { flex: 1; min-width: 0; }
+  .demo-text-full, .demo-usage-desktop { display: none; }
+  .demo-text-short { display: inline; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .demo-usage-mobile { display: inline-block; flex-shrink: 0; font-size: 12px; padding: 2px 9px; }
+  .demo-menu-btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 5px 12px; min-height: 32px; }
+  .demo-bar-actions {
+    display: none; position: absolute; top: 100%; right: 12px; z-index: 60; width: min(260px, calc(100vw - 24px));
+    flex-direction: column; align-items: stretch; gap: 6px; padding: 10px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  }
+  .demo-open .demo-bar-actions { display: flex; }
+  .demo-bar-actions > button, .demo-bar-actions > a { width: 100%; min-height: 40px; display: flex; align-items: center; justify-content: flex-start; padding: 8px 12px; border-radius: 8px; text-align: left; }
+  .demo-bar-actions > a { border: 1px solid var(--border); background: var(--surface-alt); }
+  .demo-bar-error { position: absolute; top: 100%; left: 16px; right: 16px; background: var(--surface); padding: 8px 12px; border-radius: 8px; z-index: 59; }
+}
