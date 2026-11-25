@@ -12,8 +12,10 @@ auth.py) for a throwaway identity, and everything they do is fenced in:
     else (db/claims_store.py). Real users never see sandbox rows either.
   * Their decisions never reach the feedback table, so strangers cannot change
     the similar-claims evidence or the data the model is retrained on.
-  * They cannot create accounts, reset passwords or read the activity log
-    (main.py refuses those routes for demo users).
+  * They cannot create accounts, reset passwords or read the real activity log
+    (main.py refuses those routes for demo users). The demo ADMIN is a read-only
+    tour: it sees fictional people and a fictional activity log (see sample_users
+    and sample_audit), and "+ New account" validates the form but saves nothing.
   * They may file at most DEMO_MAX_CLAIMS claims, make at most
     DEMO_REQUESTS_PER_MINUTE requests a minute, and share one daily AI budget
     (DEMO_AI_CALLS_PER_DAY). Past that, a friendly message points them to the
@@ -43,7 +45,7 @@ from resilience import KeyedRateLimiter, SlidingWindowBudget
 
 log = logging.getLogger(__name__)
 
-ROLES = ("investigator", "customer")
+ROLES = ("investigator", "customer", "admin")
 SUBJECT_PREFIX = "demo:"
 _SESSION_ID = re.compile(r"^[0-9a-f]{24}$")
 
@@ -140,6 +142,107 @@ def usage(session_id: str) -> dict:
         "claims_max": config.DEMO_MAX_CLAIMS,
         "contact_url": config.DEMO_CONTACT_URL,
     }
+
+
+# ---------------------------------------------------------------------------
+# What the demo ADMIN sees: fictional people and activity, never the real tables
+# ---------------------------------------------------------------------------
+# (role, full name, username, active)
+_SAMPLE_PEOPLE = (
+    ("customer", "Ruby Walker", "ruby.walker", True),
+    ("customer", "Kai Tanaka", "kai.tanaka", True),
+    ("customer", "Zoe Hernandez", "zoe.hernandez", True),
+    ("customer", "Owen Schmidt", "owen.schmidt", False),
+    ("customer", "Isla Nguyen", "isla.nguyen", True),
+    ("customer", "Lucas Kim", "lucas.kim", True),
+    ("customer", "Sofia Rossi", "sofia.rossi", True),
+    ("customer", "Ethan Okafor", "ethan.okafor", True),
+    ("customer", "Mia Johnson", "mia.johnson", True),
+    ("customer", "Noah Patel", "noah.patel", True),
+    ("customer", "Liam Chen", "liam.chen", True),
+    ("customer", "Ava Martinez", "ava.martinez", True),
+    ("investigator", "Grace Kim", "grace.kim", True),
+    ("investigator", "Daniel Okafor", "daniel.okafor", True),
+    ("investigator", "Priya Sharma", "priya.sharma", True),
+)
+FAKE_ID_BASE = 9000  # ids of accounts "created" in the demo (never stored)
+
+
+def sample_usernames() -> set[str]:
+    return {username.casefold() for _, _, username, _ in _SAMPLE_PEOPLE}
+
+
+def sample_users() -> list[dict]:
+    """Fictional accounts for the demo admin's People page, newest first."""
+    now = datetime.now(UTC)
+    users = []
+    for i, (role, full_name, username, active) in enumerate(_SAMPLE_PEOPLE):
+        n = len(_SAMPLE_PEOPLE) - i  # ids ascend with age; the list is newest first
+        users.append({
+            "id": n,
+            "username": username,
+            "full_name": full_name,
+            "role": role,
+            "active": active,
+            "profile": dict(DEMO_PROFILE) if role == "customer" else None,
+            "created_at": (now - timedelta(days=21 - n, hours=n)).isoformat(),
+            "created_by": "admin" if role == "investigator" else "priya.sharma",
+            "must_change_password": False,  # nosec B105 - a flag, not a password
+        })
+    return users
+
+
+def fake_created_user(username: str, full_name: str, role: str, profile: dict | None, created_by: str) -> dict:
+    """The response to "+ New account" in the demo: what a real create returns, but nothing is stored."""
+    return {
+        "id": FAKE_ID_BASE + secrets.randbelow(900),
+        "username": username,
+        "full_name": full_name,
+        "role": role,
+        "active": True,
+        "profile": profile,
+        "created_at": claims_store.now_iso(),
+        "created_by": created_by,
+        "must_change_password": True,  # nosec B105 - a flag, not a password
+    }
+
+
+# (minutes ago, actor, action, target)
+_SAMPLE_EVENTS = (
+    (4, "ruby.walker", "claim_filed", "claim:41"),
+    (9, "priya.sharma", "claim_reviewed", "claim:40:approved"),
+    (15, "ruby.walker", "login", None),
+    (38, "priya.sharma", "login", None),
+    (55, "grace.kim", "claim_reviewed", "claim:39:not_approved"),
+    (61, "kai.tanaka", "claim_filed", "claim:39"),
+    (74, "grace.kim", "login", None),
+    (96, "owen.schmidt", "login_failed", None),
+    (97, "owen.schmidt", "login_failed", None),
+    (98, "owen.schmidt", "login_failed", None),
+    (99, "owen.schmidt", "login_failed", None),
+    (100, "owen.schmidt", "login_failed", None),
+    (101, "owen.schmidt", "login_locked", None),
+    (130, "admin", "password_reset", "customer:owen.schmidt"),
+    (131, "admin", "account_deactivated", "customer:owen.schmidt"),
+    (190, "daniel.okafor", "claim_submitted", "claim:37"),
+    (240, "zoe.hernandez", "password_changed", None),
+    (241, "zoe.hernandez", "login", None),
+    (255, "priya.sharma", "account_created", "customer:zoe.hernandez"),
+    (410, "admin", "account_created", "investigator:grace.kim"),
+    (415, "admin", "login", None),
+    (1500, "admin", "account_created", "investigator:priya.sharma"),
+)
+
+
+def sample_audit(limit: int = 200) -> list[dict]:
+    """A fictional activity log for the demo admin, newest first. The real log is never read."""
+    now = datetime.now(UTC)
+    events = [
+        {"id": 1000 - i, "at": (now - timedelta(minutes=m)).isoformat(), "actor": actor, "action": action,
+         "target": target, "ip": None}
+        for i, (m, actor, action, target) in enumerate(_SAMPLE_EVENTS)
+    ]
+    return events[: max(1, min(int(limit), 1000))]
 
 
 # ---------------------------------------------------------------------------

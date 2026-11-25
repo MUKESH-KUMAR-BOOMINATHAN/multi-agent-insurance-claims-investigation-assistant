@@ -54,6 +54,7 @@ export default function ClaimsList({ claims, loading, error, onSelect, onRefresh
       )}
 
       {!loading && !error && shown.length > 0 && (
+        <div className="table-scroll">
         <table className="claims-table">
           <thead>
             <tr>
@@ -69,18 +70,22 @@ export default function ClaimsList({ claims, loading, error, onSelect, onRefresh
             {shown.map((c) => (
               <tr key={c.id} onClick={() => onSelect(c.id)} className="clickable-row"
                 tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onSelect(c.id)}>
-                <td>
-                  <div className="cell-strong">#{c.id}</div>
-                  <div className="matched">{when(c.created_at)}</div>
-                </td>
-                <td>
-                  <div>{c.incident_type || "—"}</div>
-                  <div className="matched">
-                    {c.incident_severity || ""}
-                    {c.total_claim_amount != null && ` · $${Number(c.total_claim_amount).toLocaleString("en-US")}`}
+                <td data-label="Claim">
+                  <div className="cell-value">
+                    <div className="cell-strong">#{c.id}</div>
+                    <div className="matched">{when(c.created_at)}</div>
                   </div>
                 </td>
-                <td>
+                <td data-label="Incident">
+                  <div className="cell-value">
+                    <div>{c.incident_type || "—"}</div>
+                    <div className="matched">
+                      {c.incident_severity || ""}
+                      {c.total_claim_amount != null && ` · $${Number(c.total_claim_amount).toLocaleString("en-US")}`}
+                    </div>
+                  </div>
+                </td>
+                <td data-label="Fraud risk">
                   {c.fraud_probability != null ? (
                     <div className="risk-cell">
                       <span className={`risk-num t-${riskTone(c.fraud_probability)}`}>
@@ -95,20 +100,23 @@ export default function ClaimsList({ claims, loading, error, onSelect, onRefresh
                     <span className="badge badge-pending">manual review</span>
                   )}
                 </td>
-                <td>
+                <td data-label="Recommendation">
                   <span className={`badge badge-rec-${c.recommendation || "unknown"}`}>
                     {(c.recommendation || "—").replace(/_/g, " ")}
                   </span>
                 </td>
-                <td>{c.submitted_by || "—"}</td>
-                <td>
-                  <span className={`badge badge-${c.status}`}>{c.status}</span>
-                  {c.outcome && <div className="matched">{c.outcome === "approved" ? "approved" : "not approved"}</div>}
+                <td data-label="Submitted by">{c.submitted_by || "—"}</td>
+                <td data-label="Status">
+                  <div className="cell-value">
+                    <span className={`badge badge-${c.status}`}>{c.status}</span>
+                    {c.outcome && <div className="matched">{c.outcome === "approved" ? "approved" : "not approved"}</div>}
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       )}
       {visible.length > perPage && (
         <p className="topbar-sub bar-note">

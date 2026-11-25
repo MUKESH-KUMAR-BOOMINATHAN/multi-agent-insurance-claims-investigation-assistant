@@ -228,10 +228,11 @@ def resolve_demo(claims: dict) -> User | None:
     role = claims.get("demo_role")
     if not config.DEMO_ENABLED or not demo.is_valid_session_id(session_id) or role not in demo.ROLES:
         return None
+    names = {"investigator": "Demo Investigator", "customer": "Alex Rivera", "admin": "Demo Admin"}
     return User(
         username=f"demo.{role}",
         role=role,
-        full_name="Demo Investigator" if role == "investigator" else "Alex Rivera",
+        full_name=names[role],
         demo_session=session_id,
     )
 

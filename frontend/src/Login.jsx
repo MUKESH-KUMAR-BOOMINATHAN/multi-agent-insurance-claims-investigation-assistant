@@ -5,6 +5,7 @@ import AuthLayout from "./AuthLayout";
 const DEMO_ROLES = [
   ["investigator", "Investigator", "Review claims with fraud scores, similar past claims and AI advice, then decide."],
   ["customer", "Customer", "File a claim and follow it from \"under review\" to a decision."],
+  ["admin", "Admin", "See how people are managed and the activity log. Read-only: nothing you add is saved."],
 ];
 
 export default function Login({ onSignedIn, demo }) {
@@ -15,6 +16,10 @@ export default function Login({ onSignedIn, demo }) {
   const [starting, setStarting] = useState(null); // the demo role being started
   const [error, setError] = useState(null);
   const demoOn = Boolean(demo?.enabled);
+  // Most visitors have no account, so with the demo on the page leads with it and the
+  // sign-in form stays out of the way until someone with an account asks for it.
+  const [showSignIn, setShowSignIn] = useState(false);
+  const formVisible = !demoOn || showSignIn;
   const busy = submitting || starting !== null;
 
   const handleSubmit = async (e) => {
@@ -49,9 +54,9 @@ export default function Login({ onSignedIn, demo }) {
       <div className="auth-card">
         {demoOn && (
           <div className="demo-box" role="region" aria-label="Try the live demo">
-            <h1 className="login-title">Try it live</h1>
+            <h1 className="login-title">Explore ClaimGuard</h1>
             <p className="topbar-sub login-hint">
-              No sign-up and no password. Pick a role and explore a private sandbox with sample claims.
+              No account needed. Pick a role to try the live product in a private sandbox with sample claims.
             </p>
             <div className="demo-roles">
               {DEMO_ROLES.map(([role, title, text]) => (
@@ -66,10 +71,18 @@ export default function Login({ onSignedIn, demo }) {
                 ? "Setting up your sandbox. The database can take a few seconds to wake up."
                 : `Free demo: up to ${demo.max_claims} claims each, data cleared after 24 hours.`}
             </p>
-            <div className="demo-divider"><span>or sign in with an account</span></div>
+            {error && !formVisible && <p className="error" role="alert">{error}</p>}
+            {!showSignIn && (
+              <p className="signin-link">
+                Staff or customer with an account?{" "}
+                <button type="button" className="link-btn" onClick={() => setShowSignIn(true)}>Sign in</button>
+              </p>
+            )}
+            {showSignIn && <div className="demo-divider"><span>sign in with your account</span></div>}
           </div>
         )}
 
+        {formVisible && (
         <form className="login-form" onSubmit={handleSubmit}>
           {!demoOn && (
             <>
@@ -88,7 +101,7 @@ export default function Login({ onSignedIn, demo }) {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
-              autoFocus={!demoOn}
+              autoFocus
             />
           </label>
 
@@ -123,6 +136,7 @@ export default function Login({ onSignedIn, demo }) {
             Forgot your password? Ask your insurer to reset it; you will choose a new one when you sign in.
           </p>
         </form>
+        )}
       </div>
     </AuthLayout>
   );

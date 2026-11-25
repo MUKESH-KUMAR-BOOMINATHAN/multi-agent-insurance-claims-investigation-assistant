@@ -3,9 +3,16 @@ import { getDemoStatus } from "./api";
 
 // Shown on every screen while someone is in the public demo: what this is, which role they
 // are viewing as, how much of the free allowance is used, and how to leave or get more.
+const ROLES = ["investigator", "customer", "admin"];
+const INTRO = {
+  investigator: "an investigator",
+  customer: "a customer",
+  admin: "the admin",
+};
+
 export default function DemoBar({ role, onSwitch, onExit, refreshKey }) {
   const [status, setStatus] = useState(null);
-  const [switching, setSwitching] = useState(false);
+  const [switching, setSwitching] = useState(null); // the role being switched to
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -18,16 +25,15 @@ export default function DemoBar({ role, onSwitch, onExit, refreshKey }) {
     };
   }, [refreshKey]);
 
-  const other = role === "investigator" ? "customer" : "investigator";
-
-  const handleSwitch = async () => {
-    setSwitching(true);
+  const handleSwitch = async (target) => {
+    setSwitching(target);
     setError(null);
     try {
-      await onSwitch(other);
+      await onSwitch(target);
     } catch (e) {
       setError(e.message);
-      setSwitching(false);
+    } finally {
+      setSwitching(null);
     }
   };
 
@@ -40,18 +46,23 @@ export default function DemoBar({ role, onSwitch, onExit, refreshKey }) {
       <div className="demo-bar-main">
         <span className="demo-tag">DEMO</span>
         <span>
-          You are exploring as a <strong>{role}</strong>. Your data is private to you and cleared after 24 hours.
+          You are exploring as <strong>{INTRO[role]}</strong>.{" "}
+          {role === "admin"
+            ? "This view is read-only: nothing you add is saved."
+            : "Your data is private to you and cleared after 24 hours."}
         </span>
       </div>
       <div className="demo-bar-actions">
-        {max !== null && (
+        {max !== null && role !== "admin" && (
           <span className={`demo-usage ${atLimit ? "demo-usage-full" : ""}`} title="Claims you have filed in this demo">
             Claims {used}/{max}
           </span>
         )}
-        <button type="button" onClick={handleSwitch} disabled={switching}>
-          {switching ? "Switching…" : `Switch to ${other}`}
-        </button>
+        {ROLES.filter((r) => r !== role).map((r) => (
+          <button type="button" key={r} onClick={() => handleSwitch(r)} disabled={switching !== null}>
+            {switching === r ? "Switching…" : `Switch to ${r}`}
+          </button>
+        ))}
         {status?.contact_url && (
           <a href={status.contact_url} target="_blank" rel="noopener noreferrer">Contact Mukesh ↗</a>
         )}

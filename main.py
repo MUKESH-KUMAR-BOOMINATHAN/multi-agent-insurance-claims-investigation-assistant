@@ -206,7 +206,7 @@ class FeedbackSubmission(BaseModel):
 class DemoRoleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    role: Literal["investigator", "customer"]
+    role: Literal["investigator", "customer", "admin"]
 
 
 class LoginRequest(BaseModel):
@@ -384,6 +384,21 @@ def _demo_user(user: auth.User) -> auth.User:
     return user
 
 
+def _demo_admin(user: auth.User) -> None:
+    """The demo admin may look at the (fictional) People page and activity log; nobody else
+    in the demo may touch the account routes."""
+    if not (user.is_demo and user.role == "admin"):
+        raise HTTPException(status_code=403, detail="Not available in the demo")
+
+
+def _refuse_demo_admin_write(user: auth.User) -> None:
+    if user.is_demo and user.role == "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="The admin demo is read-only, so nothing can be added here. Switch to investigator or customer to file and review claims.",
+        )
+
+
 @app.post("/demo/start")
 def demo_start(body: DemoRoleRequest, request: Request):
     """One click, no password: a private sandbox as an investigator or a customer."""
@@ -497,6 +512,7 @@ def submit_claim(
     user: Annotated[auth.User, Depends(auth.require_org)],
 ):
     """Organization submits a full claim (all 32 fields) and sees the full analysis."""
+    _refuse_demo_admin_write(user)
     _check_claim_rate(_client_ip(request))
     if user.is_demo:
         _enforce_demo_cap(user)
@@ -554,6 +570,7 @@ def submit_feedback(
     if claim_record["status"] == "reviewed":
         raise HTTPException(status_code=409, detail=f"Claim {claim_id} was already reviewed")
 
+    _refuse_demo_admin_write(user)
     if user.is_demo:
         # A sandbox decision is never saved as feedback: it must not change the
         # similar-claims evidence or the data the model is retrained on.
@@ -684,18 +701,32 @@ def _managed_user_or_404(user_id: int, actor: auth.User) -> dict:
 
 
 @app.get("/users")
-def list_users(actor: Annotated[auth.User, Depends(auth.require_real_org)]):
+def list_users(actor: Annotated[auth.User, Depends(auth.require_org)]):
+    if actor.is_demo:
+        _demo_admin(actor)
+        return demo.sample_users()  # fictional: the real accounts are never read
     return users_store.list_users(_manageable_roles(actor))
 
 
 @app.post("/users", status_code=201)
-def create_user(body: CreateUserRequest, actor: Annotated[auth.User, Depends(auth.require_real_org)]):
+def create_user(body: CreateUserRequest, actor: Annotated[auth.User, Depends(auth.require_org)]):
+    if actor.is_demo:
+        _demo_admin(actor)
     if body.role not in _manageable_roles(actor):
         raise HTTPException(status_code=403, detail="Only the administrator can create investigator accounts")
     if body.role == "customer" and body.profile is None:
         raise HTTPException(status_code=422, detail="A customer account needs its policy details (profile)")
     if body.role != "customer" and body.profile is not None:
         raise HTTPException(status_code=422, detail="Only customer accounts have policy details")
+    if actor.is_demo:
+        # Same validation as a real account, but nothing is stored (and the real admin's
+        # username and the real accounts are never consulted).
+        if body.username.casefold() in demo.sample_usernames():
+            raise HTTPException(status_code=409, detail="That username is already taken")
+        return demo.fake_created_user(
+            body.username, body.full_name.strip(), body.role,
+            body.profile.model_dump(by_alias=True) if body.profile else None, actor.username,
+        )
     if auth.is_reserved_username(body.username):
         raise HTTPException(status_code=409, detail="That username is already taken")
     try:
@@ -738,8 +769,10 @@ def reset_user_password(
 
 @app.get("/audit")
 def audit_log(
-    _admin: Annotated[auth.User, Depends(auth.require_admin)],
+    admin: Annotated[auth.User, Depends(auth.require_admin)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
 ):
     """Most recent activity first: sign-ins, account changes, claims filed and reviewed."""
+    if admin.is_demo:
+        return demo.sample_audit(limit)  # fictional: the real log is never read
     return security_store.list_audit(limit)

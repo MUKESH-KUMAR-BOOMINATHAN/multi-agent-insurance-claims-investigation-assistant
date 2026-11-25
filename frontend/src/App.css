@@ -809,3 +809,203 @@ a.primary-btn { display: inline-flex; align-items: center; justify-content: cent
 a.primary-btn { padding: 7px 16px; border: 1px solid var(--primary); border-radius: 8px; font-size: 13px; font-weight: 600; background: var(--primary); color: #fff; }
 a.primary-btn:hover { background: var(--primary-dark); }
 .modal-actions a.primary-btn, .modal-actions button { padding: 10px 18px; font-size: 14px; border-radius: 10px; }
+
+/* =====================================================================
+   Responsive layer
+   Breakpoints: 1100 (tablet landscape) · 800 (tablet/phone: sidebar -> top bar + bottom tabs)
+                700 (phone: stacked cards) · 520 (small phone) · 380 (very small)
+   ===================================================================== */
+
+html { -webkit-text-size-adjust: 100%; }
+body { overflow-x: hidden; }
+img, svg { max-width: 100%; }
+
+/* Tables scroll inside their card instead of stretching the page. */
+.table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-scroll > table { min-width: 560px; }
+.table-scroll > .claims-table { min-width: 720px; }
+
+/* Mobile chrome is hidden on desktop. */
+.mobile-top, .mobile-tabs { display: none; }
+
+@media (max-width: 1100px) {
+  .main { padding: 24px 24px 40px; }
+}
+
+@media (max-width: 800px) {
+  .shell { flex-direction: column; min-height: 100svh; }
+  .sidebar { display: none; }
+
+  .mobile-top {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    position: sticky; top: 0; z-index: 40;
+    padding: 10px 16px; padding-top: calc(10px + env(safe-area-inset-top));
+    padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right));
+    background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .mobile-top .sidebar-brand { padding: 0; }
+  .mobile-top-right { display: flex; align-items: center; gap: 10px; }
+  .mobile-signout { padding: 6px 12px; font-size: 12.5px; }
+
+  .mobile-tabs {
+    display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    background: var(--surface); border-top: 1px solid var(--border);
+    padding: 6px max(8px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    box-shadow: 0 -4px 16px rgba(31, 42, 36, 0.06);
+  }
+  .mobile-tab {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 6px 4px; border: 0; border-radius: 10px; background: none;
+    font-size: 11px; font-weight: 500; color: var(--text-muted);
+  }
+  .mobile-tab:hover { background: var(--surface-alt); }
+  .mobile-tab.active { color: var(--primary-dark); background: var(--primary-light); font-weight: 600; }
+
+  .main {
+    padding: 18px 16px calc(84px + env(safe-area-inset-bottom));
+    padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right));
+  }
+  .topbar { flex-wrap: wrap; margin-bottom: 16px; }
+  .topbar h1 { font-size: 20px; }
+
+  /* The demo banner scrolls away; the app bar stays pinned. */
+  .demo-bar { position: static; padding: 10px 16px; }
+  .portal-bar { position: sticky; top: 0; z-index: 40; flex-wrap: wrap; gap: 8px; }
+
+  .detail-head-right { flex-wrap: wrap; }
+  .settings-row { flex-wrap: wrap; gap: 4px 16px; }
+}
+
+@media (max-width: 700px) {
+  /* 16px inputs stop iOS Safari zooming in on focus. */
+  input, select, textarea, .form-field select, .form-field input, .search,
+  .feedback-form select, .inline-form input { font-size: 16px; }
+
+  .panel, .detail .panel, .dash-card { padding: 16px; }
+  .panel-header { flex-wrap: wrap; margin-bottom: 14px; }
+  .content, .dash, .detail { gap: 14px; }
+
+  .stat-row, .kpi-row, .kpi-row.kpi-4 { gap: 10px; }
+  .stat-card { padding: 12px 14px; }
+  .stat-value { font-size: 20px; }
+  .kpi { padding: 14px 16px; }
+  .kpi-value { font-size: 24px; }
+
+  .list-header { align-items: stretch; }
+  .chips { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 2px 16px 6px; width: calc(100% + 32px); scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex-shrink: 0; white-space: nowrap; }
+  .list-tools { flex-wrap: wrap; }
+  .search { flex: 1 1 160px; }
+
+  /* Claims list: each row becomes a card with labelled fields. */
+  .table-scroll > .claims-table { min-width: 0; }
+  .claims-table, .claims-table tbody, .claims-table tr, .claims-table td { display: block; width: 100%; }
+  .claims-table thead { display: none; }
+  .claims-table tr {
+    border: 1px solid var(--border); border-radius: 12px; padding: 6px 14px; margin-bottom: 10px;
+    background: var(--surface);
+  }
+  .claims-table tbody tr:last-child td { border-bottom: 1px solid var(--border); }
+  .claims-table tbody tr:last-child td:last-child, .claims-table td:last-child { border-bottom: 0; }
+  .claims-table td {
+    display: flex; justify-content: space-between; align-items: center; gap: 14px;
+    padding: 10px 0; text-align: right;
+  }
+  .claims-table td::before {
+    content: attr(data-label); flex-shrink: 0; text-align: left;
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted);
+  }
+  .claims-table td > div { text-align: right; }
+  .claims-table .risk-cell { width: 110px; }
+
+  /* Charts + bars */
+  .bar-row { grid-template-columns: minmax(80px, 120px) 1fr 56px; gap: 8px; font-size: 13px; }
+  .donut-wrap { align-items: center; }
+  .legend { width: 100%; }
+  .donut { width: 130px; height: 130px; }
+
+  /* Detail */
+  .detail-head { padding: 16px; flex-direction: column; align-items: flex-start; }
+  .detail-amount { font-size: 22px; }
+  .similar-table td:nth-child(4) { min-width: 140px; }
+  .choice { padding: 12px; }
+
+  /* Customer portal */
+  .my-claim { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .claim-total { flex-wrap: wrap; gap: 6px; }
+  .tracker { max-width: none; }
+  .portal-user { gap: 10px; font-size: 13px; flex-wrap: wrap; }
+
+  /* Settings / people */
+  .profile { flex-wrap: wrap; }
+  .settings-actions { flex-wrap: wrap; }
+  .inline-form { width: 100%; }
+  .inline-form input { flex: 1 1 140px; min-width: 0; }
+  .form-group { padding: 14px; }
+
+  /* Demo bar */
+  .demo-bar-main { align-items: flex-start; }
+  .demo-bar-actions { width: 100%; }
+
+  /* Touch-friendly buttons */
+  button, a.primary-btn { min-height: 38px; }
+  .row-actions button { min-height: 34px; }
+  .modal { padding: 22px 20px; }
+  .modal-actions > * { flex: 1 1 140px; }
+}
+
+@media (max-width: 520px) {
+  .form-grid, .policy-grid, .facts { grid-template-columns: 1fr; }
+  .form-group { margin-top: 14px; }
+  .feedback-form { max-width: none; }
+
+  .auth-brand { padding: 22px 18px; }
+  .auth-headline { font-size: 24px; }
+  .auth-main { padding: 20px 14px; }
+  .auth-card { padding: 24px 20px; border-radius: 16px; }
+  .login-shell { padding: 14px; }
+  .login-card { padding: 22px 18px; }
+
+  .gauge { width: 112px; height: 112px; }
+  .score-row { gap: 14px; }
+  .rec-decision { font-size: 15px; }
+  .legend li { grid-template-columns: 10px 1fr auto 36px; }
+  .people-stats { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 380px) {
+  .stat-row, .kpi-row, .kpi-row.kpi-4 { grid-template-columns: 1fr; }
+  .mobile-tab { font-size: 10px; }
+  .mobile-signout { padding: 6px 9px; }
+  .brand-name { font-size: 13px; }
+}
+
+/* Short landscape phones: don't let the fixed tab bar eat the screen. */
+@media (max-width: 900px) and (max-height: 480px) {
+  .mobile-tab span { display: none; }
+  .mobile-tab { padding: 8px 4px; }
+  .main { padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+}
+
+/* Very wide screens: keep content readable. */
+@media (min-width: 1600px) {
+  .content { max-width: 1280px; }
+}
+
+/* Auth screens on small screens: brand banner hugs its content; the form takes the rest. */
+@media (max-width: 860px) { .auth { grid-template-rows: auto 1fr; } .auth-main { align-items: start; padding-top: 28px; } }
+
+@media (max-width: 700px) {
+  .claims-table td::before { flex: 0 0 108px; }
+  .claims-table td > .cell-value { flex: 1; min-width: 0; text-align: right; }
+  .kpi-row > .kpi:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  /* SVG charts shrink with the screen; keep their labels legible. */
+  .axis, .axis-num { font-size: 12px; }
+  .threshold-label { font-size: 11px; }
+  .donut-cap { font-size: 11px; }
+}
+
+/* Sign-in tucked below the demo */
+.signin-link { margin: 2px 0 0; text-align: center; font-size: 13.5px; color: var(--text-muted); }
+.signin-link .link-btn { font-weight: 600; }

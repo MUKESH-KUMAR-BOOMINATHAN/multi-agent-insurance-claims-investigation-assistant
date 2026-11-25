@@ -97,11 +97,15 @@ function NewAccountForm({ canCreateStaff, onCreated, onCancel }) {
   );
 }
 
-function ResetPassword({ user, onDone }) {
+function ResetPassword({ user, onDone, demo }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
   const submit = async (e) => {
     e.preventDefault();
+    if (demo) {
+      onDone(`Demo: this would reset the password for ${user.username} and unlock the account. Nothing was saved.`);
+      return;
+    }
     try {
       await resetUserPassword(user.id, password);
       onDone(`Password for ${user.username} was reset (and the account unlocked). Share it securely; they must change it at their next sign-in.`);
@@ -160,6 +164,7 @@ function ActivityLog() {
       {!events && !error && <p className="topbar-sub">Loading…</p>}
       {events && events.length === 0 && <p className="empty">No activity yet.</p>}
       {events && events.length > 0 && (
+        <div className="table-scroll">
         <table>
           <thead>
             <tr><th>When</th><th>Who</th><th>What</th><th>Target</th><th>IP</th></tr>
@@ -178,6 +183,7 @@ function ActivityLog() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -191,6 +197,7 @@ export default function People({ currentUser }) {
   const [resetting, setResetting] = useState(null);
   const [notice, setNotice] = useState(null);
   const isAdmin = currentUser?.role === "admin";
+  const isDemo = Boolean(currentUser?.demo); // fictional people; changes are shown but never saved
 
   const load = () =>
     listUsers()
@@ -210,11 +217,17 @@ export default function People({ currentUser }) {
     setUsers((prev) => [user, ...prev]);
     setNotice(
       `Account created. Send ${user.full_name} their sign-in details securely: username "${user.username}", ` +
-        `temporary password "${password}". They will choose their own password when they first sign in.`,
+        `temporary password "${password}". They will choose their own password when they first sign in.` +
+        (isDemo ? " Demo: nothing was saved, so this account disappears when you reload." : ""),
     );
   };
 
   const toggleActive = async (user) => {
+    if (isDemo) {
+      // Shown on screen only: the server never stores anything for the demo.
+      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, active: !u.active } : u)));
+      return;
+    }
     try {
       const updated = await setUserActive(user.id, !user.active);
       setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
@@ -245,6 +258,13 @@ export default function People({ currentUser }) {
         </div>
       </div>
 
+      {isDemo && (
+        <div className="notice" role="note">
+          <strong>Demo:</strong> these people and this activity are fictional. You can try every form, but nothing
+          is saved and nothing reaches the real system.
+        </div>
+      )}
+
       {notice && (
         <div className="notice notice-good" role="status">
           {notice} <button type="button" className="link-btn" onClick={() => setNotice(null)}>Dismiss</button>
@@ -265,6 +285,7 @@ export default function People({ currentUser }) {
           {error && <p className="error" role="alert">{error}</p>}
           {!loading && users.length === 0 && <p className="empty">No accounts yet. Create the first one.</p>}
           {users.length > 0 && (
+            <div className="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -291,7 +312,7 @@ export default function People({ currentUser }) {
                     <td>
                       <div className="row-actions">
                       {resetting === u.id ? (
-                        <ResetPassword user={u} onDone={(msg) => { setResetting(null); if (msg) setNotice(msg); }} />
+                        <ResetPassword user={u} demo={isDemo} onDone={(msg) => { setResetting(null); if (msg) setNotice(msg); }} />
                       ) : (
                         <>
                           <button type="button" onClick={() => setResetting(u.id)}>Reset password</button>
@@ -306,6 +327,7 @@ export default function People({ currentUser }) {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}

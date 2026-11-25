@@ -67,7 +67,7 @@ function ChoiceCards({ name, options, value, onChange }) {
   );
 }
 
-export default function ClaimDetail({ claimId, onBack, onFeedbackSubmitted }) {
+export default function ClaimDetail({ claimId, onBack, onFeedbackSubmitted, readOnly = false }) {
   const [claim, setClaim] = useState(null);
   const [error, setError] = useState(null);
 
@@ -190,6 +190,7 @@ export default function ClaimDetail({ claimId, onBack, onFeedbackSubmitted }) {
                   </div>
                 </div>
               )}
+              <div className="table-scroll">
               <table className="similar-table">
                 <thead>
                   <tr><th>Similarity</th><th>Outcome</th><th>Incident</th><th>Matched on</th></tr>
@@ -214,6 +215,7 @@ export default function ClaimDetail({ claimId, onBack, onFeedbackSubmitted }) {
                   ))}
                 </tbody>
               </table>
+              </div>
               <p className="topbar-sub bar-note">
                 {fraudInSimilar} of the {similar.length} closest shown were fraud. Similarity is context for the
                 investigator, not proof.
@@ -277,6 +279,11 @@ export default function ClaimDetail({ claimId, onBack, onFeedbackSubmitted }) {
                     : ", and the confirmed claim now informs future similar-claim evidence."}
                 </p>
               </div>
+            ) : readOnly ? (
+              <p className="topbar-sub">
+                This is the read-only admin demo, so decisions can't be recorded here. Switch to investigator to
+                review this claim.
+              </p>
             ) : (
               <div className="decision-form">
                 <div className="rec-section">Your assessment</div>

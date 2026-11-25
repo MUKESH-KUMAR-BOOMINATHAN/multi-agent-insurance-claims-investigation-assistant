@@ -34,9 +34,42 @@ const NAV = [
 ];
 
 export default function Sidebar({ onSignOut, section, onNavigate, currentUser }) {
-  // Accounts are not part of the public demo, so a demo visitor has no People page.
-  const nav = NAV.filter(([key]) => !(key === "people" && currentUser?.demo));
+  // In the public demo only the (read-only) admin tour has a People page.
+  const nav = NAV.filter(([key]) => !(key === "people" && currentUser?.demo && currentUser.role !== "admin"));
+  const initials = currentUser ? (currentUser.full_name || currentUser.username).slice(0, 2).toUpperCase() : "";
   return (
+    <>
+    {/* Phones and small tablets: the sidebar is hidden, so a slim top bar + bottom tabs replace it. */}
+    <header className="mobile-top">
+      <div className="sidebar-brand">
+        <span className="brand-mark">CG</span>
+        <div className="brand-name">ClaimGuard</div>
+      </div>
+      <div className="mobile-top-right">
+        {currentUser && (
+          <span className="avatar avatar-sm" title={currentUser.full_name || currentUser.username}>{initials}</span>
+        )}
+        {onSignOut && (
+          <button type="button" className="mobile-signout" onClick={onSignOut}>Sign out</button>
+        )}
+      </div>
+    </header>
+    <nav className="mobile-tabs" aria-label="Main">
+      {nav.map(([key, label]) => (
+        <button
+          type="button"
+          key={key}
+          className={`mobile-tab ${section === key ? "active" : ""}`}
+          aria-current={section === key ? "page" : undefined}
+          onClick={() => onNavigate(key)}
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            {ICONS[key]}
+          </svg>
+          <span>{label}</span>
+        </button>
+      ))}
+    </nav>
     <aside className="sidebar">
       <div className="sidebar-brand">
         <span className="brand-mark">CG</span>
@@ -84,5 +117,6 @@ export default function Sidebar({ onSignOut, section, onNavigate, currentUser })
         </button>
       )}
     </aside>
+    </>
   );
 }

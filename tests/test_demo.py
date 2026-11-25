@@ -49,6 +49,16 @@ def incident(valid_claim):
     )}
 
 
+@pytest.fixture
+def profile_fields(valid_claim):
+    return {k: valid_claim[k] for k in (
+        "months_as_customer", "age", "policy_state", "policy_csl", "policy_deductable",
+        "policy_annual_premium", "umbrella_limit", "insured_sex", "insured_education_level",
+        "insured_occupation", "insured_relationship", "capital-gains", "capital-loss",
+        "auto_make", "auto_model", "auto_year",
+    )}
+
+
 def _auth(token):
     return {"Authorization": f"Bearer {token}"}
 
@@ -94,7 +104,7 @@ def test_config_advertises_the_demo_when_enabled(client):
 
 
 def test_start_returns_a_token_for_the_chosen_role(client):
-    for role in ("investigator", "customer"):
+    for role in ("investigator", "customer", "admin"):
         body = client.post("/demo/start", json={"role": role}).json()
         assert body["user"]["role"] == role and body["user"]["demo"] is True
         assert body["demo"]["claims_used"] == 0 and body["demo"]["claims_max"] == 2
@@ -102,8 +112,8 @@ def test_start_returns_a_token_for_the_chosen_role(client):
         assert me["role"] == role and me["demo"] is True
 
 
-def test_start_rejects_other_roles(client):
-    assert client.post("/demo/start", json={"role": "admin"}).status_code == 422
+def test_start_rejects_unknown_roles(client):
+    assert client.post("/demo/start", json={"role": "superuser"}).status_code == 422
 
 
 def test_turning_the_demo_off_revokes_existing_tokens(client, monkeypatch):
@@ -115,7 +125,7 @@ def test_turning_the_demo_off_revokes_existing_tokens(client, monkeypatch):
 def test_a_forged_or_malformed_demo_token_is_rejected(client):
     bad_session = jwt.encode({"sub": "demo:not-a-session", "demo_role": "investigator", "iss": auth.ISSUER,
                               "iat": 1, "exp": 9_999_999_999}, SECRET, "HS256")
-    bad_role = jwt.encode({"sub": "demo:" + "a" * 24, "demo_role": "admin", "iss": auth.ISSUER,
+    bad_role = jwt.encode({"sub": "demo:" + "a" * 24, "demo_role": "superuser", "iss": auth.ISSUER,
                            "iat": 1, "exp": 9_999_999_999}, SECRET, "HS256")
     for token in (bad_session, bad_role):
         assert client.get("/auth/me", headers=_auth(token)).status_code == 401
@@ -360,3 +370,95 @@ def test_a_failing_seed_writes_nothing(monkeypatch):
         demo.ensure_seed(pace_s=0)
     assert claims_store.count_tagged(claims_store.SEED) == 0
     assert claims_store.count_tagged(claims_store.TEMPLATE) == 0
+
+
+# ---------------------------------------------------------------------------
+# The demo ADMIN: a read-only tour with fictional people, nothing saved
+# ---------------------------------------------------------------------------
+NEW_ACCOUNT = {"username": "new.person", "full_name": "New Person", "password": "a long password 1",
+               "role": "investigator"}
+
+
+def test_demo_admin_sees_fictional_people_never_the_real_accounts(client, profile_fields):
+    real = admin_headers(client)
+    made = client.post("/users", json={"username": "carol.real", "full_name": "Carol Real", "password": "a long password 1",
+                                       "role": "customer", "profile": profile_fields}, headers=real)
+    assert made.status_code == 201, made.text
+
+    headers = start(client, "admin")
+    people = client.get("/users", headers=headers).json()
+    assert len(people) == 15 and {"investigator", "customer"} == {p["role"] for p in people}
+    assert "carol.real" not in {p["username"] for p in people}
+    assert "password_hash" not in people[0]
+    assert any(not p["active"] for p in people)
+
+
+def test_demo_admin_sees_a_fictional_activity_log_never_the_real_one(client):
+    admin_headers(client)  # writes a real "login" event for the real admin
+    log = client.get("/audit", headers=start(client, "admin")).json()
+    assert len(log) > 10 and all(e["ip"] is None for e in log)
+    real_events = {e["id"] for e in client.get("/audit", headers=admin_headers(client)).json()}
+    assert not real_events & {e["id"] for e in log}
+
+
+def test_demo_admin_can_try_the_new_account_form_but_nothing_is_saved(client):
+    headers = start(client, "admin")
+    created = client.post("/users", json=NEW_ACCOUNT, headers=headers)
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["username"] == "new.person" and body["must_change_password"] is True and "password" not in body
+    # not stored anywhere: not in the demo list, not in the real list, and the name is still free
+    assert "new.person" not in {p["username"] for p in client.get("/users", headers=headers).json()}
+    assert all(u["username"] != "new.person" for u in client.get("/users", headers=admin_headers(client)).json())
+    assert client.post("/users", json=NEW_ACCOUNT, headers=headers).status_code == 201
+
+
+def test_demo_admin_account_form_is_validated_like_the_real_one(client):
+    headers = start(client, "admin")
+    assert client.post("/users", json={**NEW_ACCOUNT, "password": "short"}, headers=headers).status_code == 422
+    assert client.post("/users", json={**NEW_ACCOUNT, "role": "customer"}, headers=headers).status_code == 422  # no policy
+    assert client.post("/users", json={**NEW_ACCOUNT, "username": "grace.kim"}, headers=headers).status_code == 409
+
+
+def test_demo_admin_never_learns_the_real_admin_username(client):
+    headers = start(client, "admin")
+    res = client.post("/users", json={**NEW_ACCOUNT, "username": "admin"}, headers=headers)
+    assert res.status_code == 201  # the real admin's name is not consulted in the demo
+
+
+def test_demo_admin_cannot_change_or_reset_anything(client):
+    headers = start(client, "admin")
+    assert client.post("/users/1/active", json={"active": False}, headers=headers).status_code == 403
+    assert client.post("/users/1/password", json={"password": "a long password 1"}, headers=headers).status_code == 403
+    change = {"current_password": "x", "new_password": "a long password 1"}
+    assert client.post("/auth/password", json=change, headers=headers).status_code == 403
+
+
+def test_demo_admin_can_read_claims_but_not_add_or_decide(client, valid_claim):
+    seed_row(claims_store.TEMPLATE, status="pending")
+    headers = start(client, "admin")
+    rows = client.get("/claims", headers=headers).json()
+    assert any(c["status"] == "pending" for c in rows)
+    claim_id = next(c["id"] for c in rows if c["status"] == "pending")
+    assert client.get(f"/claims/{claim_id}", headers=headers).status_code == 200
+
+    filed = client.post("/claims", json=valid_claim, headers=headers)
+    assert filed.status_code == 403 and "read-only" in filed.json()["detail"]
+    fb = {"investigator_decision": "agreed", "confirmed_fraud_reported": "N"}
+    assert client.post(f"/claims/{claim_id}/feedback", json=fb, headers=headers).status_code == 403
+    assert claims_store.get_claim(claim_id)["status"] == "pending"
+
+
+def test_other_demo_roles_still_cannot_reach_the_account_routes(client):
+    for role in ("investigator", "customer"):
+        headers = start(client, role)
+        assert client.get("/users", headers=headers).status_code == 403
+        assert client.get("/audit", headers=headers).status_code == 403
+        assert client.post("/users", json=NEW_ACCOUNT, headers=headers).status_code == 403
+
+
+def test_a_visitor_can_switch_between_all_three_roles(client):
+    headers = start(client, "customer")
+    for role in ("admin", "investigator", "customer", "admin"):
+        headers = switch(client, headers, role)
+        assert client.get("/auth/me", headers=headers).json()["role"] == role

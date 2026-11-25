@@ -20,10 +20,10 @@ import "./App.css";
 
 // Which screen a URL hash means. Deep links: #new opens the form, #claim/12 opens that claim
 // (handy for sharing/screenshots). Anything unknown is the claims list.
-function parseRoute(hash, canSeePeople) {
+function parseRoute(hash, { canSeePeople, canCreate }) {
   const claim = /^claim\/(\d+)$/.exec(hash);
   if (claim) return { section: "claims", view: "detail", claimId: Number(claim[1]) };
-  if (hash === "new") return { section: "claims", view: "new", claimId: null };
+  if (hash === "new" && canCreate) return { section: "claims", view: "new", claimId: null };
   if (hash === "analytics" || hash === "settings") return { section: hash, view: "list", claimId: null };
   if (hash === "people" && canSeePeople) return { section: "people", view: "list", claimId: null };
   return { section: "claims", view: "list", claimId: null };
@@ -34,11 +34,13 @@ function Dashboard({ onSignOut, authRequired, currentUser, onSwitchRole }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const isDemo = Boolean(currentUser?.demo);
+  // The demo admin is a read-only tour: it can look at everything but add nothing.
+  const demoAdmin = isDemo && currentUser.role === "admin";
 
   // The URL hash is the single source of truth for the screen, and every change goes through
   // useHashRoute so the browser's Back button steps through the screens you visited.
   const [hash, go, back] = useHashRoute();
-  const { section, view, claimId } = parseRoute(hash, !isDemo);
+  const { section, view, claimId } = parseRoute(hash, { canSeePeople: !isDemo || demoAdmin, canCreate: !demoAdmin });
 
   // State is only set in the promise callbacks; `loading` starts true, and a manual
   // refresh keeps the current list on screen while it reloads.
@@ -94,7 +96,7 @@ function Dashboard({ onSignOut, authRequired, currentUser, onSwitchRole }) {
               <h1>{title}</h1>
               <p className="topbar-sub">{subtitle}</p>
             </div>
-            {section === "claims" && view === "list" && (
+            {section === "claims" && view === "list" && !demoAdmin && (
               <button className="primary-btn" onClick={() => go("new")}>
                 + New Claim
               </button>
@@ -128,6 +130,7 @@ function Dashboard({ onSignOut, authRequired, currentUser, onSwitchRole }) {
                 claimId={claimId}
                 onBack={() => back("claims")}
                 onFeedbackSubmitted={refresh}
+                readOnly={demoAdmin}
               />
             )}
           </main>
@@ -250,7 +253,8 @@ const signOut = session.required
     session.user.role === "customer" ? (
       <CustomerPortal user={session.user} onSignOut={signOut} onSwitchRole={switchRole} />
     ) : (
-      <Dashboard authRequired={session.required} onSignOut={signOut} currentUser={session.user} onSwitchRole={switchRole} />
+      // key: a new role is a new dashboard (fresh screen, fresh claims), not the old one with different props
+      <Dashboard key={session.user.role} authRequired={session.required} onSignOut={signOut} currentUser={session.user} onSwitchRole={switchRole} />
     );
   return (
     <>
