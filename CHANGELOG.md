@@ -5,6 +5,16 @@ All notable changes to this project are documented here, in the
 
 ## [Unreleased] - one-click demo, sample data, Back-button fix
 
+### Added (front page and admin demo)
+- **Demo-first front page.** Most visitors have no account, so the first page leads with the demo (three role cards) and tucks the sign-in form behind "Staff or customer with an account? Sign in". Without the demo the form is shown as before.
+- **Read-only admin demo.** `POST /demo/start` and `/demo/switch` accept `admin`. The demo admin sees **fictional** people and a **fictional** activity log (the real accounts and audit log are never read), can try the "+ New account" form (validated like the real one, nothing stored), and can read claims but cannot file or decide them. The real admin's username is never consulted for demo requests. (`demo.py`, `main.py`)
+- A demo bar that switches between all three roles.
+- Responsive mobile layout (bottom tab bar, stacked claims table).
+- 9 more tests (254 in total) and a 25-check browser script for the front page and admin tour.
+
+### Fixed (front page and admin demo)
+- Switching between the two dashboard roles kept the same component mounted, so the role-switch buttons stayed disabled and the old screen lingered. A role change now remounts the dashboard.
+
 ### Added
 - **One-click public demo** (`DEMO_ENABLED`). `POST /demo/start` gives a visitor a short-lived signed token for a throwaway investigator or customer identity, and `POST /demo/switch` changes role inside the same sandbox. There is no account, no password and nothing to register. (`demo.py`, `auth.py`)
 - **Private sandboxes.** A visitor's claims carry their session id (`claims.demo_session`, added by the automatic migration), are invisible to everyone else and to real staff, are deleted after 24 hours, and are **never written to the feedback table**, so a stranger cannot change the similar-claims evidence or the data the model is retrained on.

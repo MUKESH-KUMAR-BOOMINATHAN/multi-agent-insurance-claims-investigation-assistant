@@ -4,7 +4,7 @@ Last updated: 2026-11-25
 
 Built by **Mukesh Kumar** · [Portfolio](https://a-iportfolio-sigma.vercel.app/)
 
-**Live demo: https://multi-agent-insurance-claims-invest.vercel.app/**. Pick **Investigator** or **Customer** on the sign-in page; there is nothing to register. The first load can take up to a minute while the free server wakes up (the page tells you so).
+**Live demo: https://multi-agent-insurance-claims-invest.vercel.app/**. Pick **Investigator**, **Customer** or **Admin** on the first page; there is nothing to register, and the sign-in form is tucked below for people who have an account. The first load can take up to a minute while the free server wakes up (the page tells you so).
 
 ClaimGuard is an AI-assisted fraud-investigation tool for insurance claims. Each new claim goes through four stages:
 
@@ -25,9 +25,9 @@ ClaimGuard is an AI-assisted fraud-investigation tool for insurance claims. Each
 | **Evidence** | Structured similarity: ROC-AUC 0.77, compared with 0.56 for text embeddings |
 | **AI guardrails** | The reply is checked against a strict format, and the business rules live in code. The AI can never approve a claim the model flagged. |
 | **Reliability** | Every step has a fallback. No failure ends up as a 500, and the screen says what degraded. |
-| **Try it** | One click, no password: a private sandbox as an investigator or a customer, with sample claims already in the dashboards. |
+| **Try it** | One click, no password: a private sandbox as an investigator, a customer or a read-only admin, with sample claims already in the dashboards. |
 | **Roles** | Admin, investigator and customer. Customers see only a status, never their score. |
-| **Quality** | 245 tests (the original 218 also pass on Postgres). `ruff`, `bandit` and `pip-audit` are clean. |
+| **Quality** | 254 tests (the original 218 also pass on Postgres). `ruff`, `bandit` and `pip-audit` are clean. |
 | **Cost** | $0 on free tiers (Render, Vercel, Neon, Groq), using about 200 MB of RAM |
 
 ![Claims dashboard](docs/images/04-dashboard.png)
@@ -77,9 +77,9 @@ flowchart LR
 
 ## Try it live
 
-Open the live link and pick a role. There is no registration and no password to ask for.
+Most visitors have no account, so the first page is the demo: pick a role. There is no registration and no password to ask for. (If you do have an account, **Sign in** is just below the role cards.)
 
-![One-click demo on the sign-in page](docs/images/16-demo-sign-in.png)
+![The first page is the demo: pick a role, with sign-in tucked below](docs/images/16-demo-sign-in.png)
 
 A good five-minute tour:
 
@@ -87,8 +87,11 @@ A good five-minute tour:
 2. Press **Switch to investigator** in the top bar. Your claim is in the list with its fraud score, the most similar past claims and the AI's recommendation. Record a decision.
 3. **Switch to customer** again. Your claim now reads *Approved* or *Not approved*.
 4. Open **Analytics**: the dashboards are already populated with sample claims (real rows of the public dataset, run through the real pipeline).
+5. Switch to **Admin** to see how people are managed: the People page and the activity log. Try **+ New account**: the form is validated like the real one and shows the success flow, but nothing is saved.
 
 ![The live demo as an investigator](docs/images/19-demo-investigator.png)
+
+![The read-only admin demo: fictional people, nothing is saved](docs/images/20-demo-admin-people.png)
 
 A public link with no password is a risk, so the demo is a sandbox rather than a shared login:
 
@@ -97,7 +100,8 @@ A public link with no password is a risk, so the demo is a sandbox rather than a
 | **Private to each visitor** | Your claims are tagged with your session and invisible to everyone else. They are deleted after 24 hours. |
 | **Sample data is read-only** | The sample claims fill the dashboards, but you can only record decisions on your own. |
 | **Never feeds the model** | A demo decision is not saved as feedback, so strangers cannot change the similar-claims evidence or the data the model is retrained on. |
-| **No accounts** | Creating or resetting accounts, changing passwords and reading the activity log are refused by the server, not just hidden. |
+| **No real accounts** | The admin view shows fictional people and a fictional activity log, never the real ones. The server refuses to create, reset or change anything real, and the real admin's username is never consulted. |
+| **Admin is read-only** | The admin tour can look at everything but cannot file or decide claims. Its "+ New account" form validates the input and saves nothing. |
 | **Capped** | 5 claims per visitor, 90 requests a minute, 12 new sessions an hour per address and 200 overall. |
 | **Shared AI allowance** | Demo claims share 60 Groq calls a day. After that they get the rules-based recommendation, so the demo can never drain the real budget. |
 | **A clear next step** | At the claim cap, a dialog explains the limit and links to my portfolio for higher limits, your own deployment or a custom build. |
@@ -118,7 +122,7 @@ Everyone signs in on the same page, and the account's role decides what they see
 | **Admin** | Environment variables, never stored in the database | Everything, plus manage **investigator** accounts and read the activity log | |
 | **Investigator** | The admin | See every claim and its full analysis, record decisions, use Analytics, manage **customer** accounts | Other staff accounts |
 | **Customer** | The admin or an investigator (there is no public sign-up) | File claims and follow **their own** claims | Fraud score, signals, similar claims, the AI's reasoning, anyone else's claims |
-| **Demo visitor** | Nobody: one click on the sign-in page | Everything an investigator or customer can do, inside a private sandbox | Other visitors' claims, accounts, the activity log, anything that changes the real system |
+| **Demo visitor** | Nobody: one click on the first page | Investigator and customer actions inside a private sandbox, or a read-only admin tour of fictional people | Other visitors' claims, the real accounts and activity log, anything that changes the real system |
 
 The organization records each customer's policy details once (coverage limit, premium and so on). The customer then describes only the incident and three amounts, and the server merges the two and computes the total.
 
@@ -282,7 +286,7 @@ I captured these from the real app, with sign-in on, a Postgres database and a l
 | **Authorization** | Roles are checked on every route and re-read from the database on every request, so deactivation takes effect immediately. A customer can only ever read their own claims. |
 | **Input** | Every field is bounded, unknown fields are rejected, bodies are capped at 64 KB, and decisions are strict enums. |
 | **Headers** | The API sends HSTS, `nosniff`, `X-Frame-Options: DENY` and `no-store`. The frontend has a strict CSP via [`frontend/vercel.json`](frontend/vercel.json). API docs are off in production. |
-| **Public demo** | A demo visitor holds a short-lived signed token for a throwaway identity, not an account. Every request is limited per visitor, claims are capped, the AI allowance is shared and finite, and the server refuses account routes, password changes, the audit log and decisions on sample data. Sandbox rows are filtered out of every real list. |
+| **Public demo** | A demo visitor holds a short-lived signed token for a throwaway identity, not an account. Every request is limited per visitor, claims are capped, the AI allowance is shared and finite, and the server refuses password changes and decisions on sample data. The demo admin is read-only and is served fictional people and activity, never the real tables. Sandbox rows are filtered out of every real list. |
 | **LLM safety** | Claim data is fenced as data in the prompt, and client-supplied text is never echoed into it. The reply is schema-validated, and the rules are enforced in code. |
 | **Audit trail** | Sign-ins, failures, lockouts, password and account changes, and claims filed and reviewed are all logged. Passwords, tokens and claim contents never are. |
 | **Supply chain** | The lockfile is committed and installs are hash-verified. `pip-audit`, `bandit` and `ruff` (security rules) are clean. |
@@ -428,7 +432,7 @@ Beyond the hosting gaps above, these are real limits of the system itself:
 uv run python -m pytest -q
 ```
 
-There are **245 tests**. The original 218 pass on SQLite and on Postgres 16 (set `TEST_DATABASE_URL` to run them on Postgres); the 27 added for the demo ran on SQLite, and the Postgres paths they use were exercised on the live deployment. The suite never touches the network: Groq is replaced by a fake. It covers the call guards, the Groq client, schema and policy enforcement, every fallback path, auth (including token tampering and `alg=none` forgery), roles, request protections, retrieval, persistence and the retraining gate. The demo tests cover sandbox isolation, the customer-to-investigator round trip, that decisions never reach the feedback table, the claim, request and AI limits, forged demo tokens, clean-up, and the all-or-nothing seeding. I also drove the demo end to end in a real browser (24 checks: Back and Forward on every screen, role switching, the claim cap and its dialog, and the cold-start screen). On top of the tests, `ruff` (with security rules), `bandit` and `pip-audit` are clean.
+There are **254 tests**. The original 218 pass on SQLite and on Postgres 16 (set `TEST_DATABASE_URL` to run them on Postgres); the 36 added for the demo ran on SQLite, and the Postgres paths they use were exercised on the live deployment. The suite never touches the network: Groq is replaced by a fake. It covers the call guards, the Groq client, schema and policy enforcement, every fallback path, auth (including token tampering and `alg=none` forgery), roles, request protections, retrieval, persistence and the retraining gate. The demo tests cover sandbox isolation, the customer-to-investigator round trip, that decisions never reach the feedback table, the claim, request and AI limits, forged demo tokens, clean-up, the all-or-nothing seeding, and the read-only admin tour (fictional data only, nothing saved, real accounts and audit log never exposed). I also drove the demo end to end in a real browser (49 checks: the demo-first front page, Back and Forward on every screen, role switching, the claim cap and its dialog, the cold-start screen, and the admin tour). On top of the tests, `ruff` (with security rules), `bandit` and `pip-audit` are clean.
 
 ## Project structure
 
