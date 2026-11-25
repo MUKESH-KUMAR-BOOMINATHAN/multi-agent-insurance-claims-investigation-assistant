@@ -4,7 +4,7 @@ Last updated: 2026-11-25
 
 Built by **Mukesh Kumar** · [Portfolio](https://a-iportfolio-sigma.vercel.app/)
 
-<!-- Live demo: add the Vercel URL here once deployed, e.g. **Live demo:** https://claimguard.vercel.app (the first load can take about a minute while the free API wakes up) -->
+**Live demo: https://multi-agent-insurance-claims-invest.vercel.app/**. Pick **Investigator** or **Customer** on the sign-in page; there is nothing to register. The first load can take up to a minute while the free server wakes up (the page tells you so).
 
 ClaimGuard is an AI-assisted fraud-investigation tool for insurance claims. Each new claim goes through four stages:
 
@@ -25,8 +25,9 @@ ClaimGuard is an AI-assisted fraud-investigation tool for insurance claims. Each
 | **Evidence** | Structured similarity: ROC-AUC 0.77, compared with 0.56 for text embeddings |
 | **AI guardrails** | The reply is checked against a strict format, and the business rules live in code. The AI can never approve a claim the model flagged. |
 | **Reliability** | Every step has a fallback. No failure ends up as a 500, and the screen says what degraded. |
+| **Try it** | One click, no password: a private sandbox as an investigator or a customer, with sample claims already in the dashboards. |
 | **Roles** | Admin, investigator and customer. Customers see only a status, never their score. |
-| **Quality** | 218 tests that pass on SQLite and Postgres. `ruff`, `bandit` and `pip-audit` are clean. |
+| **Quality** | 245 tests (the original 218 also pass on Postgres). `ruff`, `bandit` and `pip-audit` are clean. |
 | **Cost** | $0 on free tiers (Render, Vercel, Neon, Groq), using about 200 MB of RAM |
 
 ![Claims dashboard](docs/images/04-dashboard.png)
@@ -34,6 +35,7 @@ ClaimGuard is an AI-assisted fraud-investigation tool for insurance claims. Each
 ## Contents
 
 - [What makes it different](#what-makes-it-different)
+- [Try it live](#try-it-live)
 - [Who uses it](#who-uses-it)
 - [How it works](#how-it-works)
 - [Architecture](#architecture)
@@ -73,6 +75,40 @@ flowchart LR
     F --> E
 ```
 
+## Try it live
+
+Open the live link and pick a role. There is no registration and no password to ask for.
+
+![One-click demo on the sign-in page](docs/images/16-demo-sign-in.png)
+
+A good five-minute tour:
+
+1. Choose **Customer** and file a claim. It shows as *Under review*.
+2. Press **Switch to investigator** in the top bar. Your claim is in the list with its fraud score, the most similar past claims and the AI's recommendation. Record a decision.
+3. **Switch to customer** again. Your claim now reads *Approved* or *Not approved*.
+4. Open **Analytics**: the dashboards are already populated with sample claims (real rows of the public dataset, run through the real pipeline).
+
+![The live demo as an investigator](docs/images/19-demo-investigator.png)
+
+A public link with no password is a risk, so the demo is a sandbox rather than a shared login:
+
+| Rule | What it means |
+|---|---|
+| **Private to each visitor** | Your claims are tagged with your session and invisible to everyone else. They are deleted after 24 hours. |
+| **Sample data is read-only** | The sample claims fill the dashboards, but you can only record decisions on your own. |
+| **Never feeds the model** | A demo decision is not saved as feedback, so strangers cannot change the similar-claims evidence or the data the model is retrained on. |
+| **No accounts** | Creating or resetting accounts, changing passwords and reading the activity log are refused by the server, not just hidden. |
+| **Capped** | 5 claims per visitor, 90 requests a minute, 12 new sessions an hour per address and 200 overall. |
+| **Shared AI allowance** | Demo claims share 60 Groq calls a day. After that they get the rules-based recommendation, so the demo can never drain the real budget. |
+| **A clear next step** | At the claim cap, a dialog explains the limit and links to my portfolio for higher limits, your own deployment or a custom build. |
+| **Kill switch** | Unset `DEMO_ENABLED` and the demo disappears, and every demo session ends. |
+
+![The demo limit dialog](docs/images/17-demo-limit.png)
+
+Free hosting sleeps when idle, so the very first request can take up to a minute. The app says so from the first second, shows a timer, and retries on its own until the server answers.
+
+![The cold-start screen](docs/images/18-cold-start.png)
+
 ## Who uses it
 
 Everyone signs in on the same page, and the account's role decides what they see. The API checks the role on every route, so hiding a screen is never the only protection.
@@ -82,6 +118,7 @@ Everyone signs in on the same page, and the account's role decides what they see
 | **Admin** | Environment variables, never stored in the database | Everything, plus manage **investigator** accounts and read the activity log | |
 | **Investigator** | The admin | See every claim and its full analysis, record decisions, use Analytics, manage **customer** accounts | Other staff accounts |
 | **Customer** | The admin or an investigator (there is no public sign-up) | File claims and follow **their own** claims | Fraud score, signals, similar claims, the AI's reasoning, anyone else's claims |
+| **Demo visitor** | Nobody: one click on the sign-in page | Everything an investigator or customer can do, inside a private sandbox | Other visitors' claims, accounts, the activity log, anything that changes the real system |
 
 The organization records each customer's policy details once (coverage limit, premium and so on). The customer then describes only the incident and three amounts, and the server merges the two and computes the total.
 
@@ -245,6 +282,7 @@ I captured these from the real app, with sign-in on, a Postgres database and a l
 | **Authorization** | Roles are checked on every route and re-read from the database on every request, so deactivation takes effect immediately. A customer can only ever read their own claims. |
 | **Input** | Every field is bounded, unknown fields are rejected, bodies are capped at 64 KB, and decisions are strict enums. |
 | **Headers** | The API sends HSTS, `nosniff`, `X-Frame-Options: DENY` and `no-store`. The frontend has a strict CSP via [`frontend/vercel.json`](frontend/vercel.json). API docs are off in production. |
+| **Public demo** | A demo visitor holds a short-lived signed token for a throwaway identity, not an account. Every request is limited per visitor, claims are capped, the AI allowance is shared and finite, and the server refuses account routes, password changes, the audit log and decisions on sample data. Sandbox rows are filtered out of every real list. |
 | **LLM safety** | Claim data is fenced as data in the prompt, and client-supplied text is never echoed into it. The reply is schema-validated, and the rules are enforced in code. |
 | **Audit trail** | Sign-ins, failures, lockouts, password and account changes, and claims filed and reviewed are all logged. Passwords, tokens and claim contents never are. |
 | **Supply chain** | The lockfile is committed and installs are hash-verified. `pip-audit`, `bandit` and `ruff` (security rules) are clean. |
@@ -333,6 +371,8 @@ The repository includes the hosting configuration: [`render.yaml`](render.yaml) 
 
 Tables are created on first start. Run a single instance with one worker, because the Groq budget and rate limiters live in memory.
 
+The blueprint also sets `DEMO_ENABLED=true`. On its first start the API seeds the sample claims in the background (a few minutes with Groq, written in one transaction so an interrupted run leaves nothing half-done), and `/health` reports `"demo_enabled": true`. Delete the variable to switch the demo off. `scripts/seed_demo.py` re-seeds or removes the demo rows (`--reset`, `--purge`) when you want to start over or go live for real. Every demo setting is in [`.env.example`](.env.example).
+
 ## What the free-tier deployment leaves out
 
 The live demo runs entirely on free plans. That shapes what it can and cannot do, and none of these gaps would need a code change to fix with paid hosting:
@@ -341,6 +381,7 @@ The live demo runs entirely on free plans. That shapes what it can and cannot do
 |---|---|---|
 | **Instant first load** | Render's free service sleeps after about 15 minutes idle, so the next visit waits about a minute. | An always-on instance |
 | **Shared, durable limits** | The Groq budget, circuit breaker, response cache and per-IP rate limits live in process memory. They reset every time the free instance sleeps, and they force a single instance. (Lockouts and the audit log *are* in the database.) | Redis, plus horizontal scaling |
+| **An unlimited public demo** | The AI allowance is free-tier sized, so the demo is capped (5 claims per visitor, 60 shared AI calls a day, rules-based advice after that). Sandbox clean-up runs whenever someone starts a demo, because there is no scheduler. | A paid Groq plan, a job scheduler, and higher or no caps |
 | **Retraining in production** | Render's free filesystem is wiped on every restart, so a model retrained on the server would be lost. Retraining runs locally, and the new `model.pkl` ships with the next deploy. | A persistent disk or object storage, plus a model registry |
 | **Scheduled backups** | Free plans don't include cron jobs, and Neon's free restore window is short. `scripts/backup_db.py` exists but has to be run by hand. | Nightly automated backups with tested restores |
 | **Email** (forgot-password, claim-status notifications) | Needs an email provider. Passwords are reset by the organization instead. | A transactional email service |
@@ -361,7 +402,10 @@ The live demo runs entirely on free plans. That shapes what it can and cannot do
 7. **Free hosting is a design constraint, not just a price.** An ephemeral filesystem pushed all data into Postgres. A sleeping server pushed lockouts into the database. A scale-to-zero database meant `/health` must not query it, or health checks would keep it awake and burn the compute quota.
 8. **Fewer dependencies is a security feature.** An audit found 123 advisories across transitive packages. Removing the embeddings stack and upgrading the lockfile cleared every one of them.
 9. **Product decisions are part of fraud prevention.** Hiding the fraud score from customers isn't a UI choice. It stops the system from teaching people how to beat it.
-10. **Test against the database you deploy on.** The suite runs on both SQLite and Postgres, and reading `render.yaml` before the first deploy caught a build step that would have failed (it called a module I had already deleted).
+10. **A public demo is a security design problem, not a shared password.** A shared login can be changed by anyone, and a public "approve" button would let strangers rewrite the evidence the model learns from. The fix was to make each visitor a throwaway identity in a private sandbox whose decisions never reach the training data, with hard caps and a clear next step when they run out.
+11. **A single-page app needs real history entries.** Screens that only change React state make the browser's Back button leave the site. Routing every screen change through one small hook (push an entry, or replace it after a form is submitted) fixed it, and a browser script now checks Back and Forward on every screen.
+12. **Tell people about the cold start before they wonder.** A free server that sleeps looks broken to a first-time visitor. Saying so on the first frame, with a timer and automatic retries, turns a worrying blank page into a normal wait.
+13. **Test against the database you deploy on.** The suite runs on both SQLite and Postgres, and reading `render.yaml` before the first deploy caught a build step that would have failed (it called a module I had already deleted).
 
 ## Known limitations
 
@@ -375,6 +419,7 @@ Beyond the hosting gaps above, these are real limits of the system itself:
 - **No two-factor sign-in.** The audit log records actions, not who viewed which claim.
 - **A page refresh signs you out.** The token is held only in memory, a deliberate trade-off against XSS.
 - **The customer portal is status-only.** Customers can't edit or withdraw a claim, or message an investigator.
+- **Demo clean-up and limits are best effort.** Old sandboxes are deleted when someone starts a demo (there is no scheduler), the AI allowance and request limits live in memory and reset when the free server restarts, and the per-address limits trust the proxy's forwarded address. The overall start cap and the per-visitor claim cap are the backstops.
 - **The model is a pickle.** Only load model files you trained yourself, and restart the API after retraining.
 
 ## Testing
@@ -383,7 +428,7 @@ Beyond the hosting gaps above, these are real limits of the system itself:
 uv run python -m pytest -q
 ```
 
-There are **218 tests**, and they pass on SQLite and on Postgres 16 (set `TEST_DATABASE_URL` to run them on Postgres). The suite never touches the network: Groq is replaced by a fake. It covers the call guards, the Groq client, schema and policy enforcement, every fallback path, auth (including token tampering and `alg=none` forgery), roles, request protections, retrieval, persistence and the retraining gate. On top of the tests, `ruff` (with security rules), `bandit` and `pip-audit` are clean.
+There are **245 tests**. The original 218 pass on SQLite and on Postgres 16 (set `TEST_DATABASE_URL` to run them on Postgres); the 27 added for the demo ran on SQLite, and the Postgres paths they use were exercised on the live deployment. The suite never touches the network: Groq is replaced by a fake. It covers the call guards, the Groq client, schema and policy enforcement, every fallback path, auth (including token tampering and `alg=none` forgery), roles, request protections, retrieval, persistence and the retraining gate. The demo tests cover sandbox isolation, the customer-to-investigator round trip, that decisions never reach the feedback table, the claim, request and AI limits, forged demo tokens, clean-up, and the all-or-nothing seeding. I also drove the demo end to end in a real browser (24 checks: Back and Forward on every screen, role switching, the claim cap and its dialog, and the cold-start screen). On top of the tests, `ruff` (with security rules), `bandit` and `pip-audit` are clean.
 
 ## Project structure
 
@@ -395,11 +440,12 @@ There are **218 tests**, and they pass on SQLite and on Postgres 16 (set `TEST_D
 ├── resilience.py           budget, circuit breaker, TTL cache, rate limiter
 ├── middleware.py           body limit, request ids, security headers
 ├── config.py               environment-driven settings
+├── demo.py                 the public demo: sandbox rules, limits, sample data
 ├── retrain_model.py        gated retraining
 ├── agents/                 fraud scoring, guarded Groq client, recommendation, feedback
 ├── retrieval/              Gower similarity index and the retrieval step
 ├── db/                     one schema for SQLite and Postgres; claims, users, lockouts, audit
-├── scripts/                password hash, backup/restore, retrieval evaluation
+├── scripts/                password hash, backup/restore, demo seed/reset, retrieval evaluation
 ├── frontend/               React + Vite dashboard and customer portal
 ├── tests/                  pytest suite
 ├── data/                   historical claims (training + retrieval)

@@ -3,7 +3,28 @@
 All notable changes to this project are documented here, in the
 [Keep a Changelog](https://keepachangelog.com) format.
 
-## [Unreleased] - free hosting: Postgres (Neon) and stronger sign-in
+## [Unreleased] - one-click demo, sample data, Back-button fix
+
+### Added
+- **One-click public demo** (`DEMO_ENABLED`). `POST /demo/start` gives a visitor a short-lived signed token for a throwaway investigator or customer identity, and `POST /demo/switch` changes role inside the same sandbox. There is no account, no password and nothing to register. (`demo.py`, `auth.py`)
+- **Private sandboxes.** A visitor's claims carry their session id (`claims.demo_session`, added by the automatic migration), are invisible to everyone else and to real staff, are deleted after 24 hours, and are **never written to the feedback table**, so a stranger cannot change the similar-claims evidence or the data the model is retrained on.
+- **Demo limits.** 5 claims per visitor, 90 requests a minute, 12 new sessions an hour per address and 200 overall, and one shared daily AI allowance (60 Groq calls): after that, demo claims get the rules-based recommendation through a new `use_llm` switch in the pipeline. Reaching the claim cap returns a `429` with a contact link and the app shows a dialog pointing to the portfolio.
+- **Demo visitors are refused** account creation, account changes, password resets and changes, the activity log, and decisions on sample data (server-side, not just hidden).
+- **Sample data.** On its first start the API seeds sample claims (real dataset rows run through the real pipeline, marked reviewed, spread over three weeks) so the dashboards are not empty, plus hidden template claims copied into each new sandbox so the investigator view has something to review. All rows are built in memory and inserted in one transaction, so an interrupted seed leaves nothing behind. `scripts/seed_demo.py` re-seeds or removes them (`--reset`, `--purge`).
+- **Cold-start screen** from the first frame: it explains that free hosting sleeps, shows a timer, and retries on its own for about two minutes instead of failing on the first request.
+- `demo_enabled` in `/health`; the demo block in `/auth/config` appears only when the demo is on.
+- 27 new tests (245 in total): sandbox isolation, the customer to investigator round trip, no feedback written, every limit, forged demo tokens, clean-up, and all-or-nothing seeding.
+
+### Fixed
+- **Browser Back/Forward left the app.** Screens were React state only, so the URL did not change when opening a claim or a form. Every screen change now goes through one hook (`useHashRoute`) that pushes a history entry, or replaces it after a form is submitted so Back skips the finished form. Covered by a browser script.
+- A global `section` CSS rule drew a stray line inside the new sign-in card, and the global `h1` letter-spacing squeezed the card titles; both are scoped now.
+
+### Changed
+- `render.yaml` sets `DEMO_ENABLED=true`; every demo setting is documented in `.env.example`.
+- The sign-in page leads with the one-click demo when it is enabled.
+- The README gained "Try it live", demo rows in the roles, security and free-tier tables, and two more lessons.
+
+## [Previous] - free hosting: Postgres (Neon) and stronger sign-in
 
 ### UI
 - **Sign-in redesigned:** a two-panel layout (product summary + form), a show-password toggle, and the same layout for "choose your password" and "connecting / server waking up".
